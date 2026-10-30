@@ -7,10 +7,10 @@ from typing import Dict, List, Optional
 import uuid
 import warnings
 
+import bcrypt
 from fastapi import HTTPException, Security, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 import jwt
-from passlib.context import CryptContext
 from pydantic import BaseModel, Field
 
 # Suppress PyJWT short key warning to maintain compatibility with default dev secrets
@@ -18,13 +18,10 @@ warnings.filterwarnings("ignore", message=".*InsecureKeyLengthWarning.*")
 
 logger = logging.getLogger(__name__)
 
-# Secret key & token parameters
-SECRET_KEY = os.getenv("JWT_SECRET_KEY", os.getenv("SECRET_KEY", "change-me-in-production"))
+# Secret key & token parameters (minimum 32 bytes for RFC 7518 HMAC-SHA256)
+SECRET_KEY = os.getenv("JWT_SECRET_KEY", os.getenv("SECRET_KEY", "change-me-in-production-enterprise-rag-jwt-secret-key-32bytes"))
 ALGORITHM = "HS256"
 DEFAULT_EXPIRE_MINUTES = 60 * 24  # 24 hours
-
-# Bcrypt password hashing context with SHA-256 fallback
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 security_scheme = HTTPBearer(auto_error=False)
 
@@ -72,12 +69,16 @@ ROLE_CONFIG: Dict[str, Dict[str, Any]] = {
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Password Hashing Functions (bcrypt / scrypt)
+# Password Hashing Functions (Native bcrypt with SHA-256 pre-hash & scrypt fallback)
 # ─────────────────────────────────────────────────────────────────────────────
 def hash_password(password: str) -> str:
-    """Hash password using bcrypt."""
+    """Hash password using native bcrypt."""
     try:
-        return pwd_context.hash(password)
+        pw_bytes = password.encode("utf-8")
+        if len(pw_bytes) > 72:
+            pw_bytes = hashlib.sha256(pw_bytes).digest()
+        salt = bcrypt.gensalt(rounds=12)
+        return bcrypt.hashpw(pw_bytes, salt).decode("utf-8")
     except Exception as e:
         logger.warning("Bcrypt hashing failed, falling back to scrypt: %s", e)
         salt = os.urandom(16)
@@ -96,7 +97,10 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
         actual_key = hashlib.scrypt(plain_password.encode("utf-8"), salt=salt, n=16384, r=8, p=1)
         return actual_key == expected_key
     try:
-        return pwd_context.verify(plain_password, hashed_password)
+        pw_bytes = plain_password.encode("utf-8")
+        if len(pw_bytes) > 72:
+            pw_bytes = hashlib.sha256(pw_bytes).digest()
+        return bcrypt.checkpw(pw_bytes, hashed_password.encode("utf-8"))
     except Exception as e:
         logger.error("Password verification error: %s", e)
         return False

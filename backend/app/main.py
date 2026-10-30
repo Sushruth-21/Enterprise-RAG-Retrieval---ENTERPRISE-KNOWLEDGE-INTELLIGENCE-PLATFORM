@@ -1,7 +1,13 @@
 from __future__ import annotations
 import logging
 import sys
+from pathlib import Path
 from contextlib import asynccontextmanager
+
+# Ensure workspace root is in sys.path so root packages resolve seamlessly
+_project_root = str(Path(__file__).resolve().parent.parent.parent)
+if _project_root not in sys.path:
+    sys.path.insert(0, _project_root)
 
 import uvicorn
 from fastapi import FastAPI, Request
