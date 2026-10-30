@@ -221,15 +221,19 @@ def classify_status(state: OrchestratorState) -> Dict[str, Any]:
 
 
 def build_citations(state: OrchestratorState) -> Dict[str, Any]:
-    """Build Citation objects from the used passages."""
+    """Build Citation objects from the used passages with snippets and relevance scores."""
     citations = [
         Citation(
+            id=p.chunk_id,
             document_id=p.document_id,
             document_name=p.document_name,
             version=p.version,
             section=p.section,
             page=p.page,
+            page_number=p.page,
             chunk_id=p.chunk_id,
+            snippet=p.content[:300] if p.content else p.section,
+            relevance_score=float(p.score or 0.85),
         )
         for p in state["all_passages"][:5]  # Top 5 citations
     ]

@@ -1,0 +1,123 @@
+-- ============================================================================
+-- ENTERPRISE QUERY: POSTGRESQL DATABASE SCHEMA (pgvector enabled)
+-- ============================================================================
+
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+CREATE EXTENSION IF NOT EXISTS "vector"; -- pgvector for embedding search
+
+-- 1. WORKSPACES (Partition Isolation)
+CREATE TABLE workspaces (
+    id VARCHAR(64) PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    description TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- 2. DOCUMENTS (Indexed Knowledge Files)
+CREATE TYPE document_format_enum AS ENUM ('pdf', 'docx', 'txt', 'md');
+CREATE TYPE document_status_enum AS ENUM ('pending', 'indexing', 'indexed', 'failed');
+
+CREATE TABLE documents (
+    id VARCHAR(64) PRIMARY KEY,
+    workspace_id VARCHAR(64) NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    name VARCHAR(255) NOT NULL,
+    format document_format_enum NOT NULL,
+    size_bytes BIGINT NOT NULL,
+    page_count INT DEFAULT 1,
+    chunk_count INT DEFAULT 0,
+    checksum_sha256 VARCHAR(64),
+    status document_status_enum DEFAULT 'indexed',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX idx_docs_workspace ON documents(workspace_id);
+
+-- 3. DOCUMENT CHUNKS & VECTOR EMBEDDINGS (Grounded Citations)
+CREATE TABLE document_chunks (
+    id VARCHAR(64) PRIMARY KEY,
+    document_id VARCHAR(64) NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    chunk_index INT NOT NULL,
+    page_number INT NOT NULL,
+    content TEXT NOT NULL,
+    embedding vector(1536), -- 1536 for OpenAI / 768 for Gemini text-embedding-004
+    token_count INT,
+    metadata JSONB,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- HNSW Vector Cosine Distance Index for <50ms nearest-neighbor retrieval
+CREATE INDEX idx_chunks_embedding ON document_chunks 
+USING hnsw (embedding vector_cosine_ops)
+WITH (m = 16, ef_construction = 64);
+
+CREATE INDEX idx_chunks_document ON document_chunks(document_id);
+
+-- 4. CHAT CONVERSATIONS & MESSAGES
+CREATE TABLE conversations (
+    id VARCHAR(64) PRIMARY KEY,
+    workspace_id VARCHAR(64) NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    user_id VARCHAR(64) DEFAULT 'emp-default',
+    title VARCHAR(255),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE TYPE coverage_enum AS ENUM ('full', 'partial', 'insufficient_evidence');
+
+CREATE TABLE chat_messages (
+    id VARCHAR(64) PRIMARY KEY,
+    conversation_id VARCHAR(64) NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    role VARCHAR(16) NOT NULL CHECK (role IN ('user', 'assistant', 'system')),
+    content TEXT NOT NULL,
+    coverage coverage_enum DEFAULT 'full',
+    grounded_doc_count INT DEFAULT 0,
+    execution_time_ms INT DEFAULT 0,
+    citations JSONB DEFAULT '[]'::jsonb, -- Array of { id, documentId, documentName, pageNumber, snippet, relevanceScore }
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX idx_messages_conversation ON chat_messages(conversation_id);
+
+-- 5. EMPLOYEES & RBAC
+CREATE TYPE employee_role_enum AS ENUM ('employee', 'analyst', 'manager', 'compliance_officer', 'admin');
+CREATE TYPE employee_status_enum AS ENUM ('active', 'suspended');
+
+CREATE TABLE employees (
+    id VARCHAR(64) PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    email VARCHAR(255) UNIQUE NOT NULL,
+    department VARCHAR(255) NOT NULL,
+    role employee_role_enum NOT NULL DEFAULT 'employee',
+    status employee_status_enum NOT NULL DEFAULT 'active',
+    assigned_workspaces JSONB DEFAULT '[]'::jsonb,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX idx_employees_email ON employees(email);
+
+-- 6. POLICY DOCUMENTS (Repository CRUD)
+CREATE TYPE policy_category_enum AS ENUM (
+    'Information Security', 
+    'Data Privacy & GDPR', 
+    'Financial & SEC', 
+    'HR & Code of Conduct', 
+    'Engineering & Operations'
+);
+CREATE TYPE policy_status_enum AS ENUM ('published', 'draft', 'archived');
+
+CREATE TABLE policy_documents (
+    id VARCHAR(64) PRIMARY KEY,
+    title VARCHAR(255) NOT NULL,
+    category policy_category_enum NOT NULL,
+    version VARCHAR(32) NOT NULL DEFAULT 'v1.0',
+    department VARCHAR(255) NOT NULL,
+    effective_date DATE NOT NULL,
+    status policy_status_enum NOT NULL DEFAULT 'published',
+    summary TEXT NOT NULL,
+    content TEXT NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);

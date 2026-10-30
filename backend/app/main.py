@@ -8,7 +8,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.api import batch, chat, documents, health
+from app.api import auth, batch, chat, documents, health
 from app.config import get_settings
 
 # ──────────────────────────────────────────────
@@ -55,16 +55,17 @@ app = FastAPI(
     redoc_url="/redoc",
 )
 
-# CORS — allow Person 5's frontend
+# CORS — allow frontend on localhost:5173, localhost:3000, or any dev port
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.CORS_ORIGINS,
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 # Routes
+app.include_router(auth.router, prefix="/api", tags=["Auth & RBAC"])
 app.include_router(chat.router, prefix="/api", tags=["Chat"])
 app.include_router(documents.router, prefix="/api", tags=["Documents"])
 app.include_router(batch.router, prefix="/api", tags=["Batch"])

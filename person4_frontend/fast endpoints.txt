@@ -1,0 +1,39 @@
+POST /api/documents/upload
+  - Consumes: multipart/form-data (file: UploadFile, workspace_id: str)
+  - Returns: DocumentItem object { id, workspaceId, name, format, sizeBytes, pageCount, chunkCount }
+
+GET /api/documents
+  - Query params: workspace_id: Optional[str], format: Optional[str]
+  - Returns: List[DocumentItem]
+
+POST /api/chat
+  - Consumes: { workspace_id: str, query: str, conversation_id: Optional[str], document_ids: List[str] }
+  - Returns: {
+      message_id: str,
+      conversation_id: str,
+      response: str,
+      coverage: "full" | "partial" | "insufficient_evidence",
+      grounded_doc_count: int,
+      execution_time_ms: int,
+      citations: [
+        { id: str, document_id: str, document_name: str, page_number: int, snippet: str, relevance_score: float }
+      ]
+    }
+
+POST /api/batch
+  - Consumes: { workspace_id: str, questions: List[str], document_ids: List[str] }
+  - Returns: {
+      batch_id: str,
+      workspace_id: str,
+      overall_execution_time_ms: int,
+      coverage_rate: float,
+      results: [
+        { id: str, question: str, answer: str, coverage: str, execution_time_ms: int, citations: [...] }
+      ]
+    }
+
+GET /api/chat/{conversation_id}/history
+  - Returns: List[ChatMessage]
+
+GET /api/health
+  - Returns: { status: "ok", latency_ms: int, version: "1.0.0" }
