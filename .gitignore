@@ -5,21 +5,34 @@ __pycache__/
 *.so
 .Python
 
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# Environment variables & secrets
+.env
+*.env
+!.env.example
+
 # Testing & coverage
 .pytest_cache/
 .coverage
 htmlcov/
 
-# Build artifacts
-*.egg-info/
-dist/
-build/
-
-# Environments
-.venv/
-venv/
-ENV/
-env/
+# Database & local data
+*.sqlite3
+*.db
+pgdata/
+data/mock_docs/
+person1/
 
 # IDE & OS
 .vscode/
@@ -28,7 +41,6 @@ env/
 *.swo
 .DS_Store
 Thumbs.db
-
-# Generated local mock data / scratch
-data/mock_docs/
-person1/
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
