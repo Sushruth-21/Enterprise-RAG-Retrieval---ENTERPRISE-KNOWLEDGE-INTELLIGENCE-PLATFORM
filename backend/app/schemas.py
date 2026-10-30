@@ -67,6 +67,8 @@ class DocumentUploadResponse(BaseModel):
     document_name: str
     status: str
     message: str
+    version_id: Optional[str] = None
+    status_url: Optional[str] = None
 
 
 class DocumentInfo(BaseModel):

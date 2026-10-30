@@ -10,7 +10,7 @@ import uuid
 from datetime import datetime
 from typing import List
 
-from fastapi import FastAPI, UploadFile, File
+from fastapi import FastAPI, File, Form, UploadFile
 from pydantic import BaseModel
 
 app = FastAPI(title="Mock Ingestion Server", version="1.0.0")
@@ -76,15 +76,22 @@ def health():
 
 
 @app.post("/ingest")
-async def ingest(file: UploadFile = File(...)) -> dict:
+async def ingest(
+    file: UploadFile = File(...),
+    organization_id: str = Form("public"),
+    document_name: str = Form(""),
+    version_label: str = Form("1.0"),
+    supersedes_id: str = Form(""),
+    effective_date: str = Form(""),
+) -> dict:
     """Accept a document upload and return a mock processing response."""
     content = await file.read()
     doc_id = f"doc_{uuid.uuid4().hex[:8]}"
-    filename = file.filename or "unknown"
+    filename = document_name or file.filename or "unknown"
     new_doc = {
         "document_id": doc_id,
         "document_name": filename,
-        "version": "1.0",
+        "version": version_label,
         "is_current": True,
         "doc_type": "policy" if ".pdf" in filename.lower() else "document",
         "page_count": max(1, len(content) // 3000),  # rough estimate

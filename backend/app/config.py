@@ -32,6 +32,9 @@ class Settings(BaseSettings):
     MCP_SERVER_URL: str = "http://localhost:8001"
     RETRIEVAL_API_URL: str = "http://localhost:8002"
     INGESTION_API_URL: str = "http://localhost:8003"
+    INGESTION_UPLOAD_PATH: str = "/ingest"
+    INGESTION_STATUS_PATH: str = "/status"
+    INGESTION_MAX_FILE_SIZE_MB: int = 50
 
     # Backend settings
     MAX_CONTEXT_TOKENS: int = 4096
