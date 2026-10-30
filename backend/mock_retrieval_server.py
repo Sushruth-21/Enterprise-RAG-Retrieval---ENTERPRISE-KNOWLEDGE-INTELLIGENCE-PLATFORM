@@ -8,6 +8,7 @@ Usage:
 from __future__ import annotations
 from datetime import datetime
 from typing import List, Optional
+import re
 import uuid
 
 from fastapi import FastAPI
@@ -118,7 +119,39 @@ def search(req: SearchRequest) -> List[dict]:
     results = [p for p in MOCK_PASSAGES if p["access_scope"] == req.access_scope or req.access_scope == "public"]
     if req.doc_id:
         results = [p for p in results if p["document_id"] == req.doc_id]
-    return results[: req.top_k]
+
+    stop_words = {
+        "what", "which", "where", "when", "who", "how", "does", "are",
+        "the", "and", "for", "from", "with", "that", "this", "per",
+    }
+    query_terms = {
+        term
+        for term in re.findall(r"\b[a-zA-Z]{3,}\b", req.query.lower())
+        if term not in stop_words
+    }
+    if not query_terms:
+        return []
+
+    ranked = []
+    for passage in results:
+        passage_terms = set(
+            re.findall(
+                r"\b[a-zA-Z]{3,}\b",
+                f"{passage['document_name']} {passage['content']}".lower(),
+            )
+        )
+        overlap = query_terms & passage_terms
+        if overlap:
+            relevance = len(overlap) / len(query_terms)
+            ranked.append(
+                (
+                    passage["score"] * (0.5 + 0.5 * relevance),
+                    {**passage, "score": relevance},
+                )
+            )
+
+    ranked.sort(key=lambda item: item[0], reverse=True)
+    return [passage for _, passage in ranked[: req.top_k]]
 
 
 @app.get("/passage/{chunk_id}")

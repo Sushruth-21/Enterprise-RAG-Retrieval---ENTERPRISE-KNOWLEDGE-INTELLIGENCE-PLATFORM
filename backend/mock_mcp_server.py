@@ -6,6 +6,7 @@ Usage:
     uvicorn mock_mcp_server:app --port 8001
 """
 from __future__ import annotations
+import re
 from typing import List, Optional
 
 from fastapi import FastAPI
@@ -73,7 +74,38 @@ def health():
 
 @app.post("/tools/search_documents")
 def search_documents(req: SearchRequest) -> List[dict]:
-    return MOCK_PASSAGES
+    stop_words = {
+        "what", "which", "where", "when", "who", "how", "does", "are",
+        "the", "and", "for", "from", "with", "that", "this", "per",
+    }
+    query_terms = {
+        term
+        for term in re.findall(r"\b[a-zA-Z]{3,}\b", req.query.lower())
+        if term not in stop_words
+    }
+    if not query_terms:
+        return []
+
+    ranked = []
+    for passage in MOCK_PASSAGES:
+        passage_terms = set(
+            re.findall(
+                r"\b[a-zA-Z]{3,}\b",
+                f"{passage['document_name']} {passage['content']}".lower(),
+            )
+        )
+        overlap = query_terms & passage_terms
+        if overlap:
+            relevance = len(overlap) / len(query_terms)
+            ranked.append(
+                (
+                    passage["score"] * (0.5 + 0.5 * relevance),
+                    {**passage, "score": relevance},
+                )
+            )
+
+    ranked.sort(key=lambda item: item[0], reverse=True)
+    return [passage for _, passage in ranked]
 
 
 @app.post("/tools/get_document_details")
