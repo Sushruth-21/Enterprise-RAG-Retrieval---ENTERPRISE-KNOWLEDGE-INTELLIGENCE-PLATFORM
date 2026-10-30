@@ -193,3 +193,69 @@ def test_sqlalchemy_lineage_and_chunks_multi_tenant():
         assert reloaded_v2 is not None
         assert reloaded_v2.superseded_document.id == doc_v1_id
         assert reloaded_v2.superseded_document.status == DocumentStatus.SUPERSEDED
+
+
+def test_chunk_embedding_vector_storage_and_qa_cache():
+    """Verify chunk embedding vector column and QACacheEntryDB table operations."""
+    from models import QACacheEntryDB, QACacheEntryModel
+
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+
+    org_id = uuid.uuid4()
+    doc_id = uuid.uuid4()
+    dummy_vec = [0.05] * 384
+
+    with Session(engine) as session:
+        # Create chunk with dense embedding
+        chunk = ChunkDB(
+            chunk_id=uuid.uuid4(),
+            organization_id=org_id,
+            document_id=doc_id,
+            document_name="Test Doc",
+            version="1.0",
+            chunk_index=0,
+            section_context="Overview",
+            page_number=1,
+            content="Sample embedding content.",
+            chunk_hash=hashlib.sha256(b"Sample embedding content.").hexdigest(),
+            embedding_model="BAAI/bge-small-en-v1.5",
+            processing_status=ProcessingStatus.COMPLETED,
+            document_status=DocumentStatus.CURRENT,
+            embedding=dummy_vec,
+        )
+        session.add(chunk)
+
+        # Create QA cache entry
+        cache_entry = QACacheEntryDB(
+            id=uuid.uuid4(),
+            organization_id=org_id,
+            query_text="What is sample?",
+            query_embedding=dummy_vec,
+            answer_text="Sample is a demonstration.",
+            formatted_context="Context from chunk 0",
+            source_document_ids=[str(doc_id)],
+            source_chunk_ids=[str(chunk.chunk_id)],
+            citation_metadata={"doc_name": "Test Doc", "page": 1},
+            is_valid=True,
+        )
+        session.add(cache_entry)
+        session.commit()
+
+        # Query back
+        loaded_chunk = session.scalar(select(ChunkDB).where(ChunkDB.chunk_id == chunk.chunk_id))
+        assert loaded_chunk is not None
+        assert loaded_chunk.embedding is not None
+        assert len(loaded_chunk.embedding) == 384
+        assert loaded_chunk.processing_status == ProcessingStatus.COMPLETED
+
+        loaded_cache = session.scalar(select(QACacheEntryDB).where(QACacheEntryDB.organization_id == org_id))
+        assert loaded_cache is not None
+        assert loaded_cache.query_text == "What is sample?"
+        assert loaded_cache.source_document_ids == [str(doc_id)]
+        assert loaded_cache.is_valid is True
+
+        # Pydantic validation
+        cache_pydantic = QACacheEntryModel.model_validate(loaded_cache)
+        assert cache_pydantic.query_text == "What is sample?"
+        assert cache_pydantic.source_document_ids == [str(doc_id)]
