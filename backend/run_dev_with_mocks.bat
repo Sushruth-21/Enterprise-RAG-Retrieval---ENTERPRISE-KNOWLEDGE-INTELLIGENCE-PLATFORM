@@ -5,8 +5,8 @@ echo ==========================================================
 
 cd /d "%~dp0"
 
-echo Starting Mock Retrieval Server (Port 8002)...
-start "Mock Retrieval Server (Port 8002)" cmd /k py -m uvicorn mock_retrieval_server:app --port 8002
+echo Starting Real Retrieval Server (Port 8002 - Person 3 Engine)...
+start "Real Retrieval Server (Port 8002)" cmd /k "cd /d "%~dp0\.." && py -m uvicorn retrieval.api:app --port 8002"
 
 echo Starting Real Ingestion Server (Port 8003 - Person 2 Pipeline)...
 start "Real Ingestion Server (Port 8003)" cmd /k py -m uvicorn real_ingestion_server:app --port 8003
