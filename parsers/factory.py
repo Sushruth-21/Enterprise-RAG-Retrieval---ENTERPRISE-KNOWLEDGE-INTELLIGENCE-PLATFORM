@@ -4,6 +4,7 @@ from typing import Dict, Optional, Type, Union
 
 from .base import BaseParser
 from .docx_parser import DocxParser
+from .image_parser import ImageParser
 from .markdown_parser import MarkdownParser
 from .models import ParsedDocument
 from .pdf_parser import PDFParser
@@ -20,6 +21,14 @@ PARSER_REGISTRY: Dict[str, Type[BaseParser]] = {
     "txt": TextParser,
     "text": TextParser,
     "log": TextParser,
+    # Image formats with OCR
+    "png": ImageParser,
+    "jpg": ImageParser,
+    "jpeg": ImageParser,
+    "tiff": ImageParser,
+    "tif": ImageParser,
+    "webp": ImageParser,
+    "bmp": ImageParser,
 }
 
 

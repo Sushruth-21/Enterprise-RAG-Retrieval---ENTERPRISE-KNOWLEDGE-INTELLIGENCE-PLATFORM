@@ -148,6 +148,39 @@ class PDFParser(BaseParser):
                     )
                 )
 
+        # Automatic OCR fallback for Scanned / Image-Only PDFs
+        if len(elements) == 0 and total_pages > 0:
+            logger.info(
+                f"PDF '{file_path.name}' contains no extractable text layer. Engaging Hybrid OCR for scanned pages..."
+            )
+            try:
+                from ocr import HybridOCREngine
+                ocr_engine = HybridOCREngine()
+                for page_idx in range(total_pages):
+                    page = doc[page_idx]
+                    page_num = page_idx + 1
+                    pix = page.get_pixmap(dpi=150)
+                    img_bytes = pix.tobytes("png")
+                    ocr_res = ocr_engine.extract_text(img_bytes)
+                    if ocr_res.text.strip():
+                        raw_text_parts.append(ocr_res.text)
+                        for line in ocr_res.lines:
+                            elements.append(
+                                StructuralElement(
+                                    element_type=ElementType.PARAGRAPH,
+                                    content=line,
+                                    page_number=page_num,
+                                    heading_hierarchy=[],
+                                    metadata={
+                                        "ocr_engine": ocr_res.engine_used,
+                                        "confidence": ocr_res.confidence,
+                                        "fallback_triggered": ocr_res.fallback_triggered,
+                                    },
+                                )
+                            )
+            except Exception as e:
+                logger.warning(f"OCR fallback for scanned PDF failed: {e}")
+
         # Fallback title if none was classified
         if not doc_title and doc.metadata.get("title"):
             doc_title = doc.metadata.get("title")
