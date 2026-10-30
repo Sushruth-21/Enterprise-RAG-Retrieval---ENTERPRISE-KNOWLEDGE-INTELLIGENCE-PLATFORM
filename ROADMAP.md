@@ -117,3 +117,13 @@
 - [x] Implemented `RetrievalEvaluator` computing Precision@K, Recall@K, Mean Reciprocal Rank (MRR), and NDCG@K.
 - [x] Unit tests in `tests/test_api_and_evaluation.py` (7 passed).
 - [x] Full test suite now passing 48/48 tests across the repository.
+
+---
+
+### [x] Phase 14: Real PostgreSQL + pgvector Integration & Alembic Migrations (Completed)
+- [x] Provisioned live PostgreSQL 16.15 cluster with native `pgvector 0.8.7` extension.
+- [x] Initialized Alembic database migration environment with dynamic URL resolution (`alembic.ini`, `alembic/env.py`).
+- [x] Generated and applied initial migration (`50f4f80b98af_initial_schema_with_pgvector_and_qa_.py`) creating `vector` extension, `documents`, `chunks` (with `Vector(384)`), `qa_cache_entries`, and indexes.
+- [x] Created separate PostgreSQL integration test suite in `tests/test_postgres_integration.py` (10 passed).
+- [x] Verified native pgvector `<=>` cosine distance search, `to_tsvector` FTS, hybrid RRF, tenant isolation, version filtering, `FOR UPDATE SKIP LOCKED` worker concurrency, and semantic cache dependency invalidation against live PostgreSQL.
+- [x] Complete test suite passing: 58/58 tests (48 SQLite unit tests + 10 real PostgreSQL integration tests).
