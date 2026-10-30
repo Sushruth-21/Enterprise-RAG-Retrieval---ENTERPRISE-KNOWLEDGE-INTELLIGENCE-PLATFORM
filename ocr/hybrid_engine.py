@@ -30,10 +30,16 @@ class HybridOCREngine:
         :param confidence_threshold: Float [0.0-1.0]. If offline confidence is below this,
                fail-safe online OCR is triggered automatically.
         """
-        self.mode = mode.lower()
+        enable_cloud = os.getenv("ENABLE_CLOUD_FALLBACK", "false").lower() in ("true", "1")
+        if not enable_cloud:
+            self.mode = "offline_only"
+            self.gemini_api_key = ""
+        else:
+            self.mode = mode.lower()
+            self.gemini_api_key = gemini_api_key or os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY") or ""
+
         self.confidence_threshold = confidence_threshold
         self.offline_engine = OfflineRapidOCR()
-        self.gemini_api_key = gemini_api_key or os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY") or ""
         self._online_engine: Optional[OnlineGeminiVisionOCR] = None
 
     @property
