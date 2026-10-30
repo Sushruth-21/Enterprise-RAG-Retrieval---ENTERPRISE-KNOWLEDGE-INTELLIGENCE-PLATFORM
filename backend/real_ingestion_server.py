@@ -64,12 +64,18 @@ async def ingest(
     Accepts real document upload, executes structural parsing (with OCR for images/scans),
     computes structure-aware chunks, and records lineage metadata.
     """
-    filename = document_name or file.filename or "unknown_file"
-    suffix = Path(filename).suffix.lower()
-    content = await file.read()
+    # Determine file suffix and filename correctly
+    raw_filename = file.filename or ""
+    filename = document_name or raw_filename or "unknown_file"
+    suffix = Path(raw_filename).suffix.lower()
+    if not suffix and document_name:
+        suffix = Path(document_name).suffix.lower()
+    if not suffix:
+        suffix = ".txt"
 
+    content = await file.read()
     doc_id = f"doc_{uuid.uuid4().hex[:8]}"
-    logger.info(f"Ingesting real document '{filename}' ({len(content)} bytes) | Tenant: {organization_id}")
+    logger.info(f"Ingesting real document '{filename}' ({len(content)} bytes, ext={suffix}) | Tenant: {organization_id}")
 
     # Write file to temporary storage for parser processing
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp_file:
@@ -81,11 +87,20 @@ async def ingest(
         parsed_doc: ParsedDocument = parse_document(tmp_path)
 
         # Step 2: Real Structure-Aware Chunking
+        doc_uuid = uuid.uuid4()
+        try:
+            org_uuid = uuid.UUID(organization_id)
+        except Exception:
+            org_uuid = uuid.uuid5(uuid.NAMESPACE_DNS, organization_id or "public")
+
         chunks = split_document_into_chunks(
             parsed_doc=parsed_doc,
-            max_tokens=500,
-            overlap_tokens=50,
-            table_mode="group",
+            document_id=doc_uuid,
+            organization_id=org_uuid,
+            document_name=filename,
+            version=version_label,
+            min_tokens=200,
+            max_tokens=600,
         )
 
         section_count = len([e for e in parsed_doc.elements if "HEADING" in str(e.element_type)])
@@ -112,13 +127,12 @@ async def ingest(
         _documents_store[doc_id] = doc_entry
         _document_chunks_store[doc_id] = [
             {
-                "chunk_id": str(c.id),
+                "chunk_id": str(c.chunk_id),
                 "index": c.chunk_index,
-                "token_count": c.token_count,
-                "content_preview": c.content[:120] + ("..." if len(c.content) > 120 else ""),
-                "heading_hierarchy": c.heading_hierarchy,
-                "page_numbers": c.page_numbers,
-                "has_table": c.has_table,
+                "section_context": c.section_context,
+                "page_number": c.page_number,
+                "chunk_hash": c.chunk_hash,
+                "content_preview": c.content[:150] + ("..." if len(c.content) > 150 else ""),
             }
             for c in chunks
         ]
