@@ -7,9 +7,6 @@ Write-Host "==========================================================" -Foregro
 
 $baseDir = $PSScriptRoot
 
-Write-Host "Starting Mock MCP Server (Port 8001)..." -ForegroundColor Yellow
-Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd '$baseDir'; py -m uvicorn mock_mcp_server:app --port 8001"
-
 Write-Host "Starting Mock Retrieval Server (Port 8002)..." -ForegroundColor Yellow
 Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd '$baseDir'; py -m uvicorn mock_retrieval_server:app --port 8002"
 

@@ -6,7 +6,6 @@ from typing import Optional
 from fastapi import APIRouter, Form, HTTPException, UploadFile, File
 
 from app.ingestion.client import IngestionClient
-from app.mcp.client import MCPClient
 from app.schemas import DocumentListResponse, DocumentUploadResponse, DocumentInfo
 
 logger = logging.getLogger(__name__)
@@ -135,9 +134,9 @@ async def get_document(document_id: str):
 
 @router.get("/documents/{document_id}/versions", summary="Get document versions")
 async def get_document_versions(document_id: str):
-    """Get version history for a document via MCP."""
-    mcp = MCPClient()
-    version_info = await mcp.get_document_version(document_id)
-    if not version_info:
-        raise HTTPException(status_code=404, detail=f"Version info not found for '{document_id}'")
-    return version_info
+    """Get version history for a document from Person 2's Ingestion service."""
+    ingestion = IngestionClient()
+    doc_info = await ingestion.get_document(document_id)
+    if not doc_info:
+        raise HTTPException(status_code=404, detail=f"Document version info not found for '{document_id}'")
+    return doc_info

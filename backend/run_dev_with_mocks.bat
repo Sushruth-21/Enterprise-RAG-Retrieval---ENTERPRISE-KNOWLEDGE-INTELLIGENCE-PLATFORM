@@ -5,9 +5,6 @@ echo ==========================================================
 
 cd /d "%~dp0"
 
-echo Starting Mock MCP Server (Port 8001)...
-start "Mock MCP Server (Port 8001)" cmd /k py -m uvicorn mock_mcp_server:app --port 8001
-
 echo Starting Mock Retrieval Server (Port 8002)...
 start "Mock Retrieval Server (Port 8002)" cmd /k py -m uvicorn mock_retrieval_server:app --port 8002
 

@@ -253,7 +253,6 @@ def _build_graph() -> Any:
 
     builder.add_node("understand_query", understand_query)
     builder.add_node("retrieve_context", retrieve_context)
-    builder.add_node("invoke_mcp_tools", invoke_mcp_tools)
     builder.add_node("merge_passages", merge_passages)
     builder.add_node("build_context", build_context)
     builder.add_node("generate_answer", generate_answer)
@@ -263,8 +262,7 @@ def _build_graph() -> Any:
 
     builder.add_edge(START, "understand_query")
     builder.add_edge("understand_query", "retrieve_context")
-    builder.add_edge("retrieve_context", "invoke_mcp_tools")
-    builder.add_edge("invoke_mcp_tools", "merge_passages")
+    builder.add_edge("retrieve_context", "merge_passages")
     builder.add_edge("merge_passages", "build_context")
     builder.add_edge("build_context", "generate_answer")
     builder.add_edge("generate_answer", "verify_answer")
