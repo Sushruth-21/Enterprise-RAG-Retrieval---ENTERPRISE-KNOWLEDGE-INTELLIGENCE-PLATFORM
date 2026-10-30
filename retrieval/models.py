@@ -13,6 +13,7 @@ class SearchResult(BaseModel):
     section_context: str
     page_number: int
     content: str
+    access_scope: str = "public"
     score: float
     rank: int = 1
     source_method: str = "hybrid"  # "dense", "sparse", "hybrid", "reranked", "graph"

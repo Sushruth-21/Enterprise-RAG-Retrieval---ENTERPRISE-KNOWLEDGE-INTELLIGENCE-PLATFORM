@@ -27,6 +27,7 @@ class FullTextRetriever:
     Guarantees:
     - Multi-tenant boundary isolation via `organization_id`.
     - Never retrieves superseded documents for current policy questions.
+    - Access scope enforcement (only returns chunks the user has clearance for).
     - PostgreSQL tsvector/tsquery ranking (`ts_rank_cd`).
     - Robust in-memory BM25 ranker when running on SQLite test databases.
     
@@ -53,6 +54,7 @@ class FullTextRetriever:
         top_k: int = 10,
         current_only: bool = True,
         as_of_date: Optional[date] = None,
+        access_scopes: Optional[List[str]] = None,
     ) -> List[SearchResult]:
         """
         Execute lexical full-text retrieval.
@@ -64,6 +66,7 @@ class FullTextRetriever:
             top_k: Max results to return.
             current_only: Whether to exclude superseded documents.
             as_of_date: Optional temporal snapshot date.
+            access_scopes: Optional list of permitted access scopes (e.g. ['public', 'internal']).
 
         Returns:
             List of SearchResult items ranked by lexical relevance.
@@ -82,6 +85,7 @@ class FullTextRetriever:
                 top_k=top_k,
                 current_only=current_only,
                 as_of_date=as_of_date,
+                access_scopes=access_scopes,
             )
 
         return self._search_bm25_fallback(
@@ -91,6 +95,7 @@ class FullTextRetriever:
             top_k=top_k,
             current_only=current_only,
             as_of_date=as_of_date,
+            access_scopes=access_scopes,
         )
 
     def _search_postgres(
@@ -101,6 +106,7 @@ class FullTextRetriever:
         top_k: int,
         current_only: bool,
         as_of_date: Optional[date],
+        access_scopes: Optional[List[str]] = None,
     ) -> List[SearchResult]:
         """PostgreSQL native tsvector full-text search with ts_rank_cd."""
         combined_text = func.concat(
@@ -130,6 +136,11 @@ class FullTextRetriever:
         if as_of_date is not None:
             stmt = stmt.where(DocumentDB.effective_date <= as_of_date)
 
+        if access_scopes:
+            stmt = stmt.where(
+                or_(ChunkDB.access_scope.in_(access_scopes), ChunkDB.access_scope.is_(None))
+            )
+
         stmt = stmt.order_by(rank_col.desc()).limit(top_k)
         rows = session.execute(stmt).all()
 
@@ -145,6 +156,7 @@ class FullTextRetriever:
                     section_context=chunk.section_context,
                     page_number=chunk.page_number,
                     content=chunk.content,
+                    access_scope=getattr(chunk, "access_scope", "public") or "public",
                     score=float(score),
                     rank=rank,
                     source_method="sparse",
@@ -161,6 +173,7 @@ class FullTextRetriever:
         top_k: int,
         current_only: bool,
         as_of_date: Optional[date],
+        access_scopes: Optional[List[str]] = None,
     ) -> List[SearchResult]:
         """In-memory BM25 ranking fallback for SQLite and non-PostgreSQL engines."""
         stmt = (
@@ -177,6 +190,11 @@ class FullTextRetriever:
 
         if as_of_date is not None:
             stmt = stmt.where(DocumentDB.effective_date <= as_of_date)
+
+        if access_scopes:
+            stmt = stmt.where(
+                or_(ChunkDB.access_scope.in_(access_scopes), ChunkDB.access_scope.is_(None))
+            )
 
         rows = session.execute(stmt).all()
         if not rows:
@@ -249,6 +267,7 @@ class FullTextRetriever:
                     section_context=chunk.section_context,
                     page_number=chunk.page_number,
                     content=chunk.content,
+                    access_scope=getattr(chunk, "access_scope", "public") or "public",
                     score=float(score),
                     rank=rank,
                     source_method="sparse",

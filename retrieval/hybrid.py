@@ -16,17 +16,20 @@ DEFAULT_RRF_K = 60
 
 class HybridRetriever:
     """
-    Hybrid retrieval combining dense semantic search (pgvector) and sparse lexical search (full-text)
+    Hybrid retriever combining dense pgvector search and sparse full-text search
     using Reciprocal Rank Fusion (RRF).
     
+    Formula:
+        RRF_Score(d) = sum_{m in models} (weight_m / (k + rank_m(d)))
+    
     Guarantees:
-    - Multi-tenant tenant boundary isolation.
-    - Excludes superseded versions for current queries.
-    - Consistent RRF rank combination formula:
-        Score(d) = sum_{m in {dense, sparse}} w_m / (k + rank_m(d))
+    - Multi-tenant boundary isolation via `organization_id`.
+    - Document status enforcement (never retrieves superseded documents if current_only=True).
+    - Access scope enforcement (only returns chunks the user has clearance for).
+    - Temporal filtering (respects effective_date if as_of_date is provided).
     
     Time Complexity:
-    - O(R_dense log R_dense + R_sparse log R_sparse) where R is the candidate result set size.
+    - O(N_dense log N_dense + N_sparse log N_sparse + C log C) where C <= 2 * candidate_pool_size.
     """
 
     def __init__(
@@ -41,11 +44,11 @@ class HybridRetriever:
         Initialize the hybrid retriever.
 
         Args:
-            vector_retriever: VectorRetriever instance.
-            fulltext_retriever: FullTextRetriever instance.
-            rrf_k: RRF smoothing constant (standard is 60).
-            dense_weight: Multiplier weight for dense vector rankings.
-            sparse_weight: Multiplier weight for sparse lexical rankings.
+            vector_retriever: Dense retriever instance.
+            fulltext_retriever: Sparse lexical retriever instance.
+            rrf_k: Smoothing constant for reciprocal rank fusion (standard default 60).
+            dense_weight: Multiplier weight for dense retrieval ranking.
+            sparse_weight: Multiplier weight for sparse lexical ranking.
         """
         self.vector_retriever = vector_retriever or VectorRetriever()
         self.fulltext_retriever = fulltext_retriever or FullTextRetriever()
@@ -62,6 +65,7 @@ class HybridRetriever:
         candidate_pool_size: int = 30,
         current_only: bool = True,
         as_of_date: Optional[date] = None,
+        access_scopes: Optional[List[str]] = None,
     ) -> List[SearchResult]:
         """
         Execute hybrid search using Reciprocal Rank Fusion.
@@ -74,6 +78,7 @@ class HybridRetriever:
             candidate_pool_size: Number of candidates to retrieve from each retriever.
             current_only: Exclude superseded documents.
             as_of_date: Optional policy effective date cutoff.
+            access_scopes: Optional list of permitted access scopes (e.g. ['public', 'internal']).
 
         Returns:
             List of fused SearchResult items sorted descending by RRF score.
@@ -89,6 +94,7 @@ class HybridRetriever:
             top_k=candidate_pool_size,
             current_only=current_only,
             as_of_date=as_of_date,
+            access_scopes=access_scopes,
         )
 
         # 2. Fetch sparse lexical candidates
@@ -99,6 +105,7 @@ class HybridRetriever:
             top_k=candidate_pool_size,
             current_only=current_only,
             as_of_date=as_of_date,
+            access_scopes=access_scopes,
         )
 
         # 3. Fuse with Reciprocal Rank Fusion
@@ -151,6 +158,7 @@ class HybridRetriever:
                     section_context=base_item.section_context,
                     page_number=base_item.page_number,
                     content=base_item.content,
+                    access_scope=base_item.access_scope,
                     score=rrf_scores[cid],
                     rank=rank,
                     source_method="hybrid",

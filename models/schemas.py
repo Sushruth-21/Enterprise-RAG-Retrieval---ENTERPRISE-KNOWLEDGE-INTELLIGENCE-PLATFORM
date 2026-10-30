@@ -91,6 +91,10 @@ class ChunkModel(BaseModel):
         ...,
         description="Lifecycle status of the parent document (current/superseded)",
     )
+    access_scope: str = Field(
+        default="public",
+        description="Access permission scope (public, internal, confidential)",
+    )
 
 
 # =====================================================================
@@ -201,6 +205,26 @@ class QACacheEntryModel(BaseModel):
         default=None,
         description="Citation breadcrumbs and metadata",
     )
+    embedding_model: str = Field(
+        default="BAAI/bge-small-en-v1.5",
+        description="Embedding model version active when cached",
+    )
+    llm_model: Optional[str] = Field(
+        default=None,
+        description="LLM generator model version",
+    )
+    prompt_version: Optional[str] = Field(
+        default=None,
+        description="Prompt template version tag/hash",
+    )
+    access_scope: str = Field(
+        default="public",
+        description="Security permission boundary for cached answer",
+    )
+    user_id: Optional[str] = Field(
+        default=None,
+        description="User ID if cache entry is private to a user",
+    )
     is_valid: bool = Field(default=True, description="Active/valid flag")
     created_at: datetime = Field(default_factory=datetime.utcnow)
     last_accessed_at: datetime = Field(default_factory=datetime.utcnow)
@@ -216,3 +240,8 @@ class QACacheCreate(BaseModel):
     source_document_ids: List[str] = Field(default_factory=list)
     source_chunk_ids: List[str] = Field(default_factory=list)
     citation_metadata: Optional[Dict[str, Any]] = None
+    embedding_model: str = "BAAI/bge-small-en-v1.5"
+    llm_model: Optional[str] = None
+    prompt_version: Optional[str] = None
+    access_scope: str = "public"
+    user_id: Optional[str] = None

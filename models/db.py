@@ -187,6 +187,15 @@ class Chunk(Base):
         comment="Denormalized status for high-throughput vector/BM25 filtering",
     )
 
+    # Access Permission Scope
+    access_scope: Mapped[str] = mapped_column(
+        String(50),
+        default="public",
+        nullable=False,
+        index=True,
+        comment="Access scope permission boundary: public, internal, confidential",
+    )
+
     # Dense Vector Embedding
     embedding: Mapped[Optional[List[float]]] = mapped_column(
         Vector(384),
@@ -250,6 +259,36 @@ class QACacheEntry(Base):
         JSON,
         nullable=True,
         comment="Structured citations (doc names, versions, page numbers, breadcrumbs)",
+    )
+    # Model and prompt lineage tracking
+    embedding_model: Mapped[str] = mapped_column(
+        String(100),
+        default="BAAI/bge-small-en-v1.5",
+        nullable=False,
+        comment="Embedding model version active when cached",
+    )
+    llm_model: Mapped[Optional[str]] = mapped_column(
+        String(100),
+        nullable=True,
+        comment="LLM generator model version (e.g. 'qwen2.5:3b', 'gemini-2.0-flash')",
+    )
+    prompt_version: Mapped[Optional[str]] = mapped_column(
+        String(50),
+        nullable=True,
+        comment="Prompt template version tag/hash",
+    )
+    access_scope: Mapped[str] = mapped_column(
+        String(50),
+        default="public",
+        nullable=False,
+        index=True,
+        comment="Security permission boundary for cached answer",
+    )
+    user_id: Mapped[Optional[str]] = mapped_column(
+        String(100),
+        nullable=True,
+        index=True,
+        comment="User ID if cache entry is private to a user",
     )
     is_valid: Mapped[bool] = mapped_column(
         Boolean,

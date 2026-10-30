@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 import logging
 from typing import Any, Dict, List, Optional, Tuple
 import uuid
@@ -6,7 +6,7 @@ import numpy as np
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
-from models.db import Document as DocumentDB, QACacheEntry as QACacheEntryDB
+from models.db import Chunk as ChunkDB, Document as DocumentDB, QACacheEntry as QACacheEntryDB
 from models.enums import DocumentStatus
 from retrieval.embedding import BGEEmbeddingService
 from retrieval.models import Citation
@@ -14,6 +14,7 @@ from retrieval.models import Citation
 logger = logging.getLogger(__name__)
 
 DEFAULT_CACHE_SIMILARITY_THRESHOLD = 0.90
+DEFAULT_EMBEDDING_MODEL = "BAAI/bge-small-en-v1.5"
 
 
 class CacheLookupResult:
@@ -28,6 +29,10 @@ class CacheLookupResult:
         similarity_score: float = 0.0,
         cache_entry_id: Optional[uuid.UUID] = None,
         invalidation_reason: Optional[str] = None,
+        access_scope: str = "public",
+        embedding_model: str = DEFAULT_EMBEDDING_MODEL,
+        llm_model: Optional[str] = None,
+        prompt_version: Optional[str] = None,
     ):
         self.is_hit = is_hit
         self.answer_text = answer_text
@@ -36,6 +41,10 @@ class CacheLookupResult:
         self.similarity_score = similarity_score
         self.cache_entry_id = cache_entry_id
         self.invalidation_reason = invalidation_reason
+        self.access_scope = access_scope
+        self.embedding_model = embedding_model
+        self.llm_model = llm_model
+        self.prompt_version = prompt_version
 
 
 class SemanticQACache:
@@ -43,9 +52,14 @@ class SemanticQACache:
     Semantic Question-Answer Cache (CAG - Cache-Augmented Generation).
     
     Guarantees:
-    - Multi-tenant tenant boundary isolation.
+    - Multi-tenant tenant boundary isolation via `organization_id`.
     - Semantic similarity matching using normalized dense BGE query embeddings.
-    - STRICT DEPENDENCY VALIDATION:
+    - Model & Prompt version tracking:
+        Cache entries are invalidated/rejected if the embedding model, LLM model,
+        or prompt template version changes.
+    - Permission & Scope validation:
+        Cached answers cannot cross user privacy or clearance scope boundaries.
+    - STRICT SOURCE DEPENDENCY VALIDATION:
         "Never reuse cached answers without validating their source dependencies and permissions."
         If any underlying source document has been superseded, deleted, or modified,
         the cache entry is invalidated immediately and fresh retrieval is enforced.
@@ -59,6 +73,7 @@ class SemanticQACache:
         self,
         embedding_service: Optional[BGEEmbeddingService] = None,
         similarity_threshold: float = DEFAULT_CACHE_SIMILARITY_THRESHOLD,
+        expected_embedding_model: str = DEFAULT_EMBEDDING_MODEL,
     ):
         """
         Initialize the semantic QA cache.
@@ -66,9 +81,11 @@ class SemanticQACache:
         Args:
             embedding_service: BGE service to vectorize queries.
             similarity_threshold: Minimum cosine similarity to trigger a candidate hit.
+            expected_embedding_model: Active embedding model identifier.
         """
         self.embedding_service = embedding_service or BGEEmbeddingService()
         self.similarity_threshold = similarity_threshold
+        self.expected_embedding_model = expected_embedding_model
 
     def lookup(
         self,
@@ -76,21 +93,31 @@ class SemanticQACache:
         organization_id: uuid.UUID,
         query: str,
         query_embedding: Optional[List[float]] = None,
+        user_id: Optional[str] = None,
+        access_scopes: Optional[List[str]] = None,
+        expected_prompt_version: Optional[str] = None,
+        expected_llm_model: Optional[str] = None,
     ) -> CacheLookupResult:
         """
-        Search for a reusable cached answer, strictly validating dependencies.
+        Search for a reusable cached answer, strictly validating dependencies, models, and permissions.
 
         Args:
             session: Active database session.
             organization_id: Tenant UUID boundary (mandatory).
             query: User's question string.
             query_embedding: Optional precomputed query embedding.
+            user_id: Optional ID of the querying user.
+            access_scopes: Permitted scopes for the user (default: ['public']).
+            expected_prompt_version: Optional prompt version constraint.
+            expected_llm_model: Optional LLM model identifier constraint.
 
         Returns:
             CacheLookupResult indicating hit/miss and validated answer.
         """
         if not query or not query.strip():
             return CacheLookupResult(is_hit=False)
+
+        effective_scopes = access_scopes if access_scopes is not None else ["public"]
 
         if query_embedding is None:
             # Query-to-query semantic cache matching uses symmetric embedding
@@ -119,6 +146,12 @@ class SemanticQACache:
         for entry in cache_entries:
             if not entry.query_embedding:
                 continue
+
+            # Model mismatch check: embeddings from different models cannot be compared
+            entry_model = entry.embedding_model or DEFAULT_EMBEDDING_MODEL
+            if entry_model != self.expected_embedding_model:
+                continue
+
             c_vec = np.array(entry.query_embedding, dtype=np.float32)
             c_norm = np.linalg.norm(c_vec)
             if c_norm > 0:
@@ -133,8 +166,69 @@ class SemanticQACache:
         if best_entry is None or best_score < self.similarity_threshold:
             return CacheLookupResult(is_hit=False, similarity_score=best_score)
 
-        # 3. CRITICAL: Validate source document dependencies and permissions
-        is_valid, reason = self._validate_source_dependencies(session, best_entry, organization_id)
+        # 3. Security & Permission Validation
+        # Check access scope clearance
+        entry_scope = best_entry.access_scope or "public"
+        if entry_scope not in effective_scopes:
+            logger.warning(
+                "Access denied to cached entry %s: entry scope '%s' not in user scopes %s",
+                best_entry.id,
+                entry_scope,
+                effective_scopes,
+            )
+            return CacheLookupResult(
+                is_hit=False,
+                similarity_score=best_score,
+                cache_entry_id=best_entry.id,
+                invalidation_reason=f"Insufficient clearance for cache entry access scope '{entry_scope}'.",
+            )
+
+        # Check user privacy boundary: private cache entry cannot be served to another user
+        if best_entry.user_id is not None and user_id is not None:
+            if str(best_entry.user_id) != str(user_id):
+                return CacheLookupResult(
+                    is_hit=False,
+                    similarity_score=best_score,
+                    cache_entry_id=best_entry.id,
+                    invalidation_reason="Cache entry belongs to a different user.",
+                )
+
+        # 4. Prompt & LLM Model Version Validation
+        if expected_prompt_version is not None:
+            if best_entry.prompt_version and best_entry.prompt_version != expected_prompt_version:
+                logger.info(
+                    "Cache miss due to prompt version change (cached=%s, expected=%s)",
+                    best_entry.prompt_version,
+                    expected_prompt_version,
+                )
+                return CacheLookupResult(
+                    is_hit=False,
+                    similarity_score=best_score,
+                    cache_entry_id=best_entry.id,
+                    invalidation_reason=f"Prompt template version mismatch: cached '{best_entry.prompt_version}' vs requested '{expected_prompt_version}'.",
+                )
+
+        if expected_llm_model is not None:
+            if best_entry.llm_model and best_entry.llm_model != expected_llm_model:
+                logger.info(
+                    "Cache miss due to LLM model change (cached=%s, expected=%s)",
+                    best_entry.llm_model,
+                    expected_llm_model,
+                )
+                return CacheLookupResult(
+                    is_hit=False,
+                    similarity_score=best_score,
+                    cache_entry_id=best_entry.id,
+                    invalidation_reason=f"LLM model mismatch: cached '{best_entry.llm_model}' vs requested '{expected_llm_model}'.",
+                )
+
+        # 5. CRITICAL: Validate source document dependencies and permissions
+        is_valid, reason = self._validate_source_dependencies(
+            session=session,
+            entry=best_entry,
+            organization_id=organization_id,
+            user_access_scopes=effective_scopes,
+        )
 
         if not is_valid:
             logger.warning(
@@ -153,7 +247,7 @@ class SemanticQACache:
             )
 
         # Update last accessed timestamp
-        best_entry.last_accessed_at = datetime.utcnow()
+        best_entry.last_accessed_at = datetime.now(timezone.utc)
         session.commit()
 
         logger.info(
@@ -170,15 +264,24 @@ class SemanticQACache:
             citation_metadata=best_entry.citation_metadata,
             similarity_score=best_score,
             cache_entry_id=best_entry.id,
+            access_scope=entry_scope,
+            embedding_model=best_entry.embedding_model or DEFAULT_EMBEDDING_MODEL,
+            llm_model=best_entry.llm_model,
+            prompt_version=best_entry.prompt_version,
         )
 
     def _validate_source_dependencies(
-        self, session: Session, entry: QACacheEntryDB, organization_id: uuid.UUID
+        self,
+        session: Session,
+        entry: QACacheEntryDB,
+        organization_id: uuid.UUID,
+        user_access_scopes: Optional[List[str]] = None,
     ) -> Tuple[bool, Optional[str]]:
         """
-        Verify that all source documents relied upon by this answer remain valid and current.
+        Verify that all source documents and chunks relied upon by this answer
+        remain valid, current, and within permitted access clearance.
 
-        Returns (True, None) if valid, or (False, reason) if stale.
+        Returns (True, None) if valid, or (False, reason) if stale or unauthorized.
         """
         source_doc_ids_raw = entry.source_document_ids or []
         if not source_doc_ids_raw:
@@ -213,6 +316,29 @@ class SemanticQACache:
                     f"Source document '{doc.name}' (canonical_id='{doc.canonical_id}', version='{doc.version}') has been superseded.",
                 )
 
+        # Check source chunk access scopes if available
+        if user_access_scopes and entry.source_chunk_ids:
+            chunk_uuids = []
+            for raw_cid in entry.source_chunk_ids:
+                try:
+                    chunk_uuids.append(uuid.UUID(str(raw_cid)))
+                except ValueError:
+                    pass
+            if chunk_uuids:
+                chunks = session.scalars(
+                    select(ChunkDB).where(
+                        ChunkDB.chunk_id.in_(chunk_uuids),
+                        ChunkDB.organization_id == organization_id,
+                    )
+                ).all()
+                for chk in chunks:
+                    c_scope = getattr(chk, "access_scope", "public") or "public"
+                    if c_scope not in user_access_scopes:
+                        return (
+                            False,
+                            f"Dependent chunk {chk.chunk_id} requires '{c_scope}' clearance which user lacks.",
+                        )
+
         return True, None
 
     def store_answer(
@@ -226,27 +352,21 @@ class SemanticQACache:
         source_chunk_ids: List[uuid.UUID],
         citation_metadata: Optional[Dict[str, Any]] = None,
         query_embedding: Optional[List[float]] = None,
+        access_scope: str = "public",
+        user_id: Optional[str] = None,
+        embedding_model: Optional[str] = None,
+        llm_model: Optional[str] = None,
+        prompt_version: Optional[str] = None,
     ) -> QACacheEntryDB:
         """
-        Store a newly synthesized question-answer pair into the semantic cache.
-
-        Args:
-            session: Active database session.
-            organization_id: Organization tenant UUID.
-            query_text: User question.
-            answer_text: Synthesized answer.
-            formatted_context: Grounding context.
-            source_document_ids: UUIDs of source documents used.
-            source_chunk_ids: UUIDs of chunks cited.
-            citation_metadata: Serialized citation list.
-            query_embedding: Optional precomputed query embedding.
-
-        Returns:
-            The newly created and persisted QACacheEntryDB record.
+        Store a newly synthesized question-answer pair into the semantic cache
+        with full audit, permission, and version metadata.
         """
         if query_embedding is None:
             # Query-to-query semantic cache matching uses symmetric embedding
             query_embedding = self.embedding_service.embed_single_document(query_text)
+
+        model_name = embedding_model or self.expected_embedding_model
 
         entry = QACacheEntryDB(
             id=uuid.uuid4(),
@@ -258,14 +378,26 @@ class SemanticQACache:
             source_document_ids=[str(doc_id) for doc_id in source_document_ids],
             source_chunk_ids=[str(chunk_id) for chunk_id in source_chunk_ids],
             citation_metadata=citation_metadata,
+            access_scope=access_scope,
+            user_id=user_id,
+            embedding_model=model_name,
+            llm_model=llm_model,
+            prompt_version=prompt_version,
             is_valid=True,
-            created_at=datetime.utcnow(),
-            last_accessed_at=datetime.utcnow(),
+            created_at=datetime.now(timezone.utc),
+            last_accessed_at=datetime.now(timezone.utc),
         )
 
         session.add(entry)
         session.commit()
-        logger.info("Persisted new QA cache entry %s for org %s", entry.id, organization_id)
+        logger.info(
+            "Persisted new QA cache entry %s (scope=%s, model=%s, prompt_v=%s) for org %s",
+            entry.id,
+            access_scope,
+            model_name,
+            prompt_version,
+            organization_id,
+        )
         return entry
 
     def invalidate_for_document(

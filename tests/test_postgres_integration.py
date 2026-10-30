@@ -719,3 +719,4 @@ def test_10_pg_semantic_qa_cache_dependency_invalidation(pg_session, embedding_s
         select(QACacheEntryDB).where(QACacheEntryDB.organization_id == org_id)
     )
     assert entry_db.is_valid is False
+

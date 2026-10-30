@@ -2,8 +2,9 @@ from datetime import date
 import logging
 from typing import List, Optional
 import uuid
+
 import numpy as np
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from models.db import Chunk as ChunkDB, Document as DocumentDB
@@ -16,24 +17,25 @@ logger = logging.getLogger(__name__)
 
 class VectorRetriever:
     """
-    Dense semantic vector retriever using PostgreSQL pgvector.
+    PostgreSQL pgvector dense retrieval service with fallback for non-Postgres engines.
     
     Guarantees:
-    - Strict multi-tenant isolation via mandatory `organization_id`.
-    - Never retrieves superseded documents for current policy searches.
-    - Filters by temporal effective dates when specified.
-    - Transparent fallback for SQLite testing environments.
+    - Multi-tenant boundary isolation via `organization_id`.
+    - Document status enforcement (never retrieves superseded documents if current_only=True).
+    - Temporal filtering (respects effective_date if as_of_date is provided).
+    - Access scope enforcement (only returns chunks the user has clearance for).
+    - Native pgvector cosine distance operator `<=>` on PostgreSQL.
     
     Time Complexity:
-    - O(log N) with HNSW/IVFFlat index in PostgreSQL, or O(C * D) brute-force scan across C candidate chunks with D dimensions.
+    - O(log N) with HNSW index in PostgreSQL, or O(N * D) with SQLite in-memory scan.
     """
 
     def __init__(self, embedding_service: Optional[BGEEmbeddingService] = None):
         """
-        Initialize the vector retriever.
+        Initialize vector retriever.
 
         Args:
-            embedding_service: Embedding service instance for query vectorization.
+            embedding_service: Embedding generator (defaults to BGE-small-en-v1.5).
         """
         self.embedding_service = embedding_service or BGEEmbeddingService()
 
@@ -42,30 +44,31 @@ class VectorRetriever:
         session: Session,
         organization_id: uuid.UUID,
         query: str,
+        query_embedding: Optional[List[float]] = None,
         top_k: int = 10,
         current_only: bool = True,
         as_of_date: Optional[date] = None,
-        query_embedding: Optional[List[float]] = None,
+        access_scopes: Optional[List[str]] = None,
     ) -> List[SearchResult]:
         """
-        Execute dense semantic retrieval.
+        Execute vector similarity search.
 
         Args:
             session: SQLAlchemy session.
-            organization_id: Tenant UUID boundary (mandatory).
-            query: User search query.
-            top_k: Number of nearest chunks to return.
-            current_only: If True, exclude superseded document chunks.
-            as_of_date: Optional temporal snapshot date for policy validity.
-            query_embedding: Optional precomputed query embedding vector.
+            organization_id: Multi-tenant organization UUID boundary.
+            query: User search query string.
+            query_embedding: Optional precomputed query embedding.
+            top_k: Number of nearest neighbors to retrieve.
+            current_only: If True, exclude superseded or archived documents.
+            as_of_date: Optional temporal snapshot date.
+            access_scopes: Optional list of permitted access scopes (e.g. ['public', 'internal']).
 
         Returns:
-            List of SearchResult items ranked by semantic similarity.
+            Ranked list of SearchResult items ordered by cosine similarity descending.
         """
-        if not query or not query.strip():
+        if not query and query_embedding is None:
             return []
 
-        # Vectorize query if not provided
         if query_embedding is None:
             query_embedding = self.embedding_service.embed_query(query)
 
@@ -91,6 +94,11 @@ class VectorRetriever:
         if as_of_date is not None:
             stmt = stmt.where(DocumentDB.effective_date <= as_of_date)
 
+        if access_scopes:
+            stmt = stmt.where(
+                or_(ChunkDB.access_scope.in_(access_scopes), ChunkDB.access_scope.is_(None))
+            )
+
         if is_postgres:
             # Native pgvector cosine distance operator (<=>)
             distance_col = ChunkDB.embedding.cosine_distance(query_embedding).label("distance")
@@ -111,6 +119,11 @@ class VectorRetriever:
             if as_of_date is not None:
                 pg_stmt = pg_stmt.where(DocumentDB.effective_date <= as_of_date)
 
+            if access_scopes:
+                pg_stmt = pg_stmt.where(
+                    or_(ChunkDB.access_scope.in_(access_scopes), ChunkDB.access_scope.is_(None))
+                )
+
             pg_stmt = pg_stmt.order_by(distance_col.asc()).limit(top_k)
             rows = session.execute(pg_stmt).all()
 
@@ -128,6 +141,7 @@ class VectorRetriever:
                         section_context=chunk.section_context,
                         page_number=chunk.page_number,
                         content=chunk.content,
+                        access_scope=getattr(chunk, "access_scope", "public") or "public",
                         score=similarity,
                         rank=rank,
                         source_method="dense",
@@ -173,6 +187,7 @@ class VectorRetriever:
                     section_context=chunk.section_context,
                     page_number=chunk.page_number,
                     content=chunk.content,
+                    access_scope=getattr(chunk, "access_scope", "public") or "public",
                     score=score,
                     rank=rank,
                     source_method="dense",
