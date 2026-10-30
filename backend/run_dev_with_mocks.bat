@@ -11,8 +11,8 @@ start "Mock MCP Server (Port 8001)" cmd /k py -m uvicorn mock_mcp_server:app --p
 echo Starting Mock Retrieval Server (Port 8002)...
 start "Mock Retrieval Server (Port 8002)" cmd /k py -m uvicorn mock_retrieval_server:app --port 8002
 
-echo Starting Mock Ingestion Server (Port 8003)...
-start "Mock Ingestion Server (Port 8003)" cmd /k py -m uvicorn mock_ingestion_server:app --port 8003
+echo Starting Real Ingestion Server (Port 8003 - Person 2 Pipeline)...
+start "Real Ingestion Server (Port 8003)" cmd /k py -m uvicorn real_ingestion_server:app --port 8003
 
 timeout /t 2 /nobreak >nul
 

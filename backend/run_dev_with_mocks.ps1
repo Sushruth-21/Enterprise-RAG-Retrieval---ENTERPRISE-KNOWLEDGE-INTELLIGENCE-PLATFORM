@@ -13,8 +13,8 @@ Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd '$baseDir'; py
 Write-Host "Starting Mock Retrieval Server (Port 8002)..." -ForegroundColor Yellow
 Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd '$baseDir'; py -m uvicorn mock_retrieval_server:app --port 8002"
 
-Write-Host "Starting Mock Ingestion Server (Port 8003)..." -ForegroundColor Yellow
-Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd '$baseDir'; py -m uvicorn mock_ingestion_server:app --port 8003"
+Write-Host "Starting Real Ingestion Server (Port 8003 - Person 2 Pipeline)..." -ForegroundColor Yellow
+Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd '$baseDir'; py -m uvicorn real_ingestion_server:app --port 8003"
 
 Start-Sleep -Seconds 2
 
