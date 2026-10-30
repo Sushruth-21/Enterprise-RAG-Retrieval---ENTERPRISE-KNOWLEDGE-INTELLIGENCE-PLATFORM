@@ -62,6 +62,22 @@ DEMO_USERS = {
         "role": "admin",
         "department": "Information Technology",
     },
+    "alex.morgan@company.com": {
+        "id": "emp-101",
+        "name": "Alex Morgan",
+        "email": "alex.morgan@company.com",
+        "password_hash": hash_password("Enterprise@2026!"),
+        "role": "employee",
+        "department": "Quantitative Analytics",
+    },
+    "admin@enterprise.internal": {
+        "id": "adm-001",
+        "name": "System Administrator",
+        "email": "admin@enterprise.internal",
+        "password_hash": hash_password("Admin@2026!"),
+        "role": "admin",
+        "department": "Security & Infrastructure",
+    },
 }
 
 

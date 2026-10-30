@@ -8,6 +8,8 @@ __pycache__/
 # Distribution / packaging
 build/
 dist/
+node_modules/
+*.tsbuildinfo
 *.egg-info/
 *.egg
 

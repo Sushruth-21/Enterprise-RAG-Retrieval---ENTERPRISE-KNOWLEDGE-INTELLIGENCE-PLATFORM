@@ -1,6 +1,6 @@
 from __future__ import annotations
 from datetime import datetime
-from typing import Any, List, Literal, Optional, Union
+from typing import Any, Dict, List, Literal, Optional, Union
 import uuid
 from pydantic import BaseModel, Field, model_validator
 
@@ -61,9 +61,10 @@ class VerificationResult(BaseModel):
 # Chat — Dual compatible with Person 1 & Person 4
 # ─────────────────────────────────────────────
 class ChatRequest(BaseModel):
-    # Person 1 uses 'question', Person 4 frontend uses 'query'
+    # Person 1 uses 'question', Person 4 frontend uses 'query' or 'message'
     question: Optional[str] = None
     query: Optional[str] = None
+    message: Optional[str] = None
     workspace_id: Optional[str] = None
     conversation_id: Optional[str] = None
     document_ids: Optional[List[str]] = Field(default_factory=list)
@@ -72,11 +73,12 @@ class ChatRequest(BaseModel):
 
     @model_validator(mode="after")
     def normalize_query(self) -> ChatRequest:
-        text = (self.question or self.query or "").strip()
+        text = (self.question or self.query or self.message or "").strip()
         if not text:
-            raise ValueError("Either 'question' or 'query' must be provided and non-empty.")
+            raise ValueError("Either 'question', 'query', or 'message' must be provided and non-empty.")
         self.question = text
         self.query = text
+        self.message = text
         if not self.access_scope:
             self.access_scope = "public"
         return self
@@ -84,13 +86,17 @@ class ChatRequest(BaseModel):
 
 class ChatResponse(BaseModel):
     message_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    query_id: Optional[str] = None
     conversation_id: str
     response: str = ""  # Person 4 frontend field
     answer: str = ""    # Person 1 backend field
     coverage: Literal["full", "partial", "insufficient_evidence"] = "full"
     status: Literal["answered", "partially_answered", "not_covered"] = "answered"
     grounded_doc_count: int = 0
+    grounded_document_count: Optional[int] = None
     execution_time_ms: int = 0
+    execution_latency_ms: Optional[int] = None
+    latency_ms: Optional[int] = None
     citations: List[Citation] = Field(default_factory=list)
     verification: Optional[VerificationResult] = Field(
         default_factory=lambda: VerificationResult(verified=True, unsupported_claims=[])
@@ -105,6 +111,14 @@ class ChatResponse(BaseModel):
         elif self.response and not self.answer:
             self.answer = self.response
 
+        # Sync IDs and latency aliases
+        if not self.query_id:
+            self.query_id = self.message_id
+        if self.latency_ms is None:
+            self.latency_ms = self.execution_time_ms
+        if self.execution_latency_ms is None:
+            self.execution_latency_ms = self.execution_time_ms
+
         # Sync coverage and status
         if self.status == "answered":
             self.coverage = "full"
@@ -117,6 +131,8 @@ class ChatResponse(BaseModel):
         if not self.grounded_doc_count and self.citations:
             unique_docs = {c.document_id for c in self.citations if c.document_id}
             self.grounded_doc_count = len(unique_docs)
+        if self.grounded_document_count is None:
+            self.grounded_document_count = self.grounded_doc_count
 
         return self
 
@@ -245,8 +261,18 @@ class BatchResultItem(BaseModel):
     question: str
     answer: str
     coverage: Literal["full", "partial", "insufficient_evidence"]
+    status: str = "completed"
     execution_time_ms: int = 0
+    latency_ms: int = 0
     citations: List[Citation] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def sync_latency(self) -> BatchResultItem:
+        if self.execution_time_ms and not self.latency_ms:
+            self.latency_ms = self.execution_time_ms
+        elif self.latency_ms and not self.execution_time_ms:
+            self.execution_time_ms = self.latency_ms
+        return self
 
 
 class BatchResponse(BaseModel):
@@ -255,13 +281,39 @@ class BatchResponse(BaseModel):
     workspace_id: str = "default"
     overall_execution_time_ms: int = 0
     coverage_rate: float = 1.0
+    total_questions: int = 0
+    completed_count: int = 0
     results: List[BatchResultItem] = Field(default_factory=list)
+    summary: Optional[Dict[str, Any]] = None
     # Person 1 backend fields
     answers: List[BatchAnswer] = Field(default_factory=list)
     total: int = 0
     answered: int = 0
     partially_answered: int = 0
     not_covered: int = 0
+
+    @model_validator(mode="after")
+    def sync_batch_summary(self) -> BatchResponse:
+        if not self.total_questions:
+            self.total_questions = self.total or len(self.results)
+        if not self.completed_count:
+            self.completed_count = len(self.results) or self.total
+        if self.summary is None:
+            full_cov = sum(1 for r in self.results if r.coverage == "full")
+            part_cov = sum(1 for r in self.results if r.coverage == "partial")
+            none_cov = sum(1 for r in self.results if r.coverage == "insufficient_evidence")
+            avg_lat = (
+                round(sum(r.execution_time_ms for r in self.results) / max(1, len(self.results)))
+                if self.results
+                else 0
+            )
+            self.summary = {
+                "full_coverage_count": full_cov,
+                "partial_coverage_count": part_cov,
+                "insufficient_evidence_count": none_cov,
+                "avg_latency_ms": avg_lat,
+            }
+        return self
 
 
 # ─────────────────────────────────────────────
@@ -270,7 +322,18 @@ class BatchResponse(BaseModel):
 class HealthResponse(BaseModel):
     status: str = "ok"
     latency_ms: int = 0
+    latencyMs: Optional[int] = None
     version: str = "1.0.0"
     ollama_available: bool = True
     cloud_available: bool = False
     db_connected: bool = True
+    vectorDbStatus: str = "connected"
+    modelGroundingStrictness: str = "enforced"
+
+    @model_validator(mode="after")
+    def sync_latency(self) -> HealthResponse:
+        if self.latency_ms and self.latencyMs is None:
+            self.latencyMs = self.latency_ms
+        elif self.latencyMs and not self.latency_ms:
+            self.latency_ms = self.latencyMs
+        return self
