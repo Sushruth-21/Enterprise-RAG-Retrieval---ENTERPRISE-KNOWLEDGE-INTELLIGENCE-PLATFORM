@@ -5,12 +5,28 @@ pydantic-settings>=2.0.0
 typing-extensions>=4.9.0
 annotated-types>=0.6.0
 
-# Database & Storage (PostgreSQL + pgvector)
+# Web API & Backend Microservices
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+httpx>=0.27.0
+python-multipart>=0.0.9
+python-dotenv>=1.0.0
+
+# Workflow Orchestration & Agent Graphs
+langgraph>=0.2.45
+langchain-core>=0.3.15
+
+# Security, RBAC & Authentication
+bcrypt>=4.0.0
+PyJWT>=2.8.0
+
+# Database, Storage & Migrations (PostgreSQL + pgvector)
 sqlalchemy>=2.0.25
 psycopg2-binary>=2.9.9
 pgvector>=0.2.5
+alembic>=1.13.0
 
-# Document Parsers
+# Document Parsers & Extraction
 pymupdf>=2.0.0
 pymupdf4llm>=2.0.0
 python-docx>=1.1.0
@@ -21,11 +37,23 @@ tabulate>=0.9.0
 pillow>=10.0.0
 beautifulsoup4>=4.12.0
 
-# Tokenization & Embeddings
+# OCR Engine (Offline RapidOCR & Hybrid)
+rapidocr>=3.0.0
+
+# Tokenization, Embeddings & Reranking
 tiktoken>=0.7.0
 numpy>=1.24.0
 transformers>=4.40.0
 torch>=2.2.0
+fastembed>=0.3.0
+
+# Graph Algorithms & Data Structures
+networkx>=3.0
+
+# Cloud LLM Providers (Optional / Fallback)
+google-generativeai>=0.8.0
+openai>=1.50.0
+anthropic>=0.39.0
 
 # Testing & Utilities
 pytest>=8.0.0
