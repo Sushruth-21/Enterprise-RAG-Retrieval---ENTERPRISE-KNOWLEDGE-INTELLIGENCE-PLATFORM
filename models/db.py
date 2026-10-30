@@ -3,18 +3,21 @@ from datetime import date, datetime
 from typing import List, Optional
 
 from sqlalchemy import (
+    Boolean,
     Date,
     DateTime,
     Enum,
     ForeignKey,
     Index,
     Integer,
+    JSON,
     String,
     Text,
     Uuid,
     func,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+from pgvector.sqlalchemy import Vector
 
 from .enums import DocumentStatus, ProcessingStatus
 
@@ -184,6 +187,13 @@ class Chunk(Base):
         comment="Denormalized status for high-throughput vector/BM25 filtering",
     )
 
+    # Dense Vector Embedding
+    embedding: Mapped[Optional[List[float]]] = mapped_column(
+        Vector(384),
+        nullable=True,
+        comment="Dense BGE vector embedding (384-dim) for semantic retrieval",
+    )
+
     # Relationships
     document: Mapped["Document"] = relationship("Document", back_populates="chunks")
 
@@ -191,4 +201,70 @@ class Chunk(Base):
         Index("ix_chunks_tenant_retrieval", "organization_id", "document_status", "document_id"),
         Index("ix_chunks_order", "document_id", "chunk_index"),
         Index("ix_chunks_embedding_dedup", "organization_id", "chunk_hash", "embedding_model"),
+    )
+
+
+class QACacheEntry(Base):
+    """
+    SQLAlchemy database model for semantic QA cache entries (CAG approach).
+    Stores answered queries, dense embeddings, generated context, answers,
+    and source document/chunk dependencies for permission and invalidation checking.
+    """
+    __tablename__ = "qa_cache_entries"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, primary_key=True, default=uuid.uuid4
+    )
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid,
+        nullable=False,
+        index=True,
+        comment="Tenant boundary for multi-tenant cache isolation",
+    )
+    query_text: Mapped[str] = mapped_column(
+        Text, nullable=False, comment="Normalized original user question"
+    )
+    query_embedding: Mapped[List[float]] = mapped_column(
+        Vector(384),
+        nullable=False,
+        comment="Dense vector embedding of query for semantic cache lookup",
+    )
+    answer_text: Mapped[str] = mapped_column(
+        Text, nullable=False, comment="Cached answer text"
+    )
+    formatted_context: Mapped[str] = mapped_column(
+        Text, nullable=False, comment="Synthesized grounding context provided to generator"
+    )
+    # Source lineage dependencies for strict invalidation checks
+    source_document_ids: Mapped[List[str]] = mapped_column(
+        JSON,
+        nullable=False,
+        comment="List of Document UUID strings the answer relies upon",
+    )
+    source_chunk_ids: Mapped[List[str]] = mapped_column(
+        JSON,
+        nullable=False,
+        comment="List of Chunk UUID strings the answer relies upon",
+    )
+    citation_metadata: Mapped[Optional[dict]] = mapped_column(
+        JSON,
+        nullable=True,
+        comment="Structured citations (doc names, versions, page numbers, breadcrumbs)",
+    )
+    is_valid: Mapped[bool] = mapped_column(
+        Boolean,
+        default=True,
+        nullable=False,
+        index=True,
+        comment="Explicit invalidation flag (e.g. when source doc is superseded)",
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    last_accessed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        Index("ix_qa_cache_org_valid", "organization_id", "is_valid"),
     )
