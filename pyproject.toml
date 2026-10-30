@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vdit"
+version = "0.1.0"
+description = "Enterprise Document Intelligence Pipeline"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "pydantic>=2.5.0",
+    "pydantic-settings>=2.0.0",
+    "sqlalchemy>=2.0.25",
+    "psycopg2-binary>=2.9.9",
+    "pgvector>=0.2.5",
+    "pymupdf>=2.0.0",
+    "python-docx>=1.1.0",
+    "docling>=2.0.0",
+    "tiktoken>=0.7.0",
+    "pytest>=8.0.0"
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["models*", "parsers*", "chunking*", "versioning*", "orchestrator*", "scripts*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
