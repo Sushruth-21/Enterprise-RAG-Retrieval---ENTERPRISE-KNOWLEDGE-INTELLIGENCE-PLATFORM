@@ -123,15 +123,25 @@ def build_context(state: OrchestratorState) -> Dict[str, Any]:
 
 
 async def generate_answer(state: OrchestratorState) -> Dict[str, Any]:
-    """Route to local/cloud and generate the answer."""
+    """Route to local Ollama and generate the answer strictly from retrieved dataset context."""
+    # Strict Grounding Check: If no passages were retrieved from corpus, short-circuit immediately.
+    # Never allow the LLM to invent an answer from its pretraining weights.
+    if not state["all_passages"] or not state["context"].strip():
+        answer = "The provided documents do not contain information about this topic."
+        await conversation_store.add_message(state["conversation_id"], "user", state["question"])
+        await conversation_store.add_message(state["conversation_id"], "assistant", answer)
+        return {"answer": answer, "model_used": "dataset-strict-grounding"}
+
     system_prompt = (
-        "You are an Enterprise Knowledge Assistant. "
-        "Answer ONLY using information from the provided context passages. "
-        "If the context does not contain the answer, say exactly: "
-        "'The provided documents do not contain information about this topic.' "
-        "Always reference the document name, section, and version. "
-        "Do NOT invent figures, percentages, dates, or names. "
-        "If a document is marked SUPERSEDED, note that it is an older version."
+        "You are an offline Enterprise Knowledge Assistant. "
+        "Answer the user's question using ONLY the provided numbered context passages below.\n"
+        "STRICT GROUNDING RULES:\n"
+        "1. Answer ONLY using facts directly stated in the provided context.\n"
+        "2. Do NOT use any pretraining knowledge, outside assumptions, or unverified claims.\n"
+        "3. If the context does not explicitly provide the answer, say exactly: "
+        "'The provided documents do not contain information about this topic.'\n"
+        "4. Always reference the document name, section, and version for your answers.\n"
+        "5. Do NOT invent figures, percentages, dates, names, or rules."
     )
 
     # Include conversation history
@@ -146,7 +156,7 @@ async def generate_answer(state: OrchestratorState) -> Dict[str, Any]:
         system_prompt=system_prompt,
         context=state["context"],
         access_scope=state["access_scope"],
-        force_local=state["force_local"],
+        force_local=True,  # Guarantee 100% local Ollama execution
     )
 
     # Save to conversation history
