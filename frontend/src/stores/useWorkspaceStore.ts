@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { Workspace, DocumentItem } from '@/types';
 import { useAuthStore } from './useAuthStore';
 import { sanitizeText } from '@/lib/security';
+import { INITIAL_WORKSPACES } from '@/mocks/initialData';
 
 interface WorkspaceState {
   workspaces: Workspace[];
@@ -27,15 +28,45 @@ interface WorkspaceState {
 }
 
 export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
-  workspaces: [],
-  activeWorkspaceId: null,
+  workspaces: INITIAL_WORKSPACES,
+  activeWorkspaceId: 'default',
   documents: [],
   searchQuery: '',
   isLoading: false,
 
   setWorkspaces: (workspaces) => set({ workspaces }),
   setActiveWorkspaceId: (id) => set({ activeWorkspaceId: id }),
-  setDocuments: (documents) => set({ documents }),
+  setDocuments: (documents) => {
+    set((state) => {
+      const allDocIds = documents.map((d) => d.id);
+      const targetWsId = state.activeWorkspaceId || state.workspaces[0]?.id || 'default';
+      const updatedWorkspaces = state.workspaces.map((w) => {
+        if (!w.selectedDocumentIds || w.selectedDocumentIds.length === 0) {
+          return {
+            ...w,
+            documentCount: documents.length,
+            selectedDocumentIds: allDocIds,
+          };
+        }
+        return {
+          ...w,
+          documentCount: documents.length,
+        };
+      });
+
+      return {
+        documents,
+        workspaces: updatedWorkspaces.length > 0 ? updatedWorkspaces : [
+          {
+            ...INITIAL_WORKSPACES[0],
+            documentCount: documents.length,
+            selectedDocumentIds: allDocIds,
+          },
+        ],
+        activeWorkspaceId: targetWsId,
+      };
+    });
+  },
   setSearchQuery: (searchQuery) => set({ searchQuery: sanitizeText(searchQuery) }),
 
   createWorkspace: (name, description) => {
@@ -84,17 +115,18 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
   toggleDocumentSelection: (docId) => {
     const { activeWorkspaceId, workspaces } = get();
-    if (!activeWorkspaceId) return;
+    const targetWsId = activeWorkspaceId || workspaces[0]?.id || 'default';
 
     set({
       workspaces: workspaces.map((w) => {
-        if (w.id !== activeWorkspaceId) return w;
-        const exists = w.selectedDocumentIds.includes(docId);
+        if (w.id !== targetWsId) return w;
+        const currentSelected = w.selectedDocumentIds || [];
+        const exists = currentSelected.includes(docId);
         return {
           ...w,
           selectedDocumentIds: exists
-            ? w.selectedDocumentIds.filter((id) => id !== docId)
-            : [...w.selectedDocumentIds, docId],
+            ? currentSelected.filter((id) => id !== docId)
+            : [...currentSelected, docId],
         };
       }),
     });
@@ -102,12 +134,13 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
   selectDocumentRange: (docIds) => {
     const { activeWorkspaceId, workspaces } = get();
-    if (!activeWorkspaceId) return;
+    const targetWsId = activeWorkspaceId || workspaces[0]?.id || 'default';
 
     set({
       workspaces: workspaces.map((w) => {
-        if (w.id !== activeWorkspaceId) return w;
-        const combined = Array.from(new Set([...w.selectedDocumentIds, ...docIds]));
+        if (w.id !== targetWsId) return w;
+        const currentSelected = w.selectedDocumentIds || [];
+        const combined = Array.from(new Set([...currentSelected, ...docIds]));
         return {
           ...w,
           selectedDocumentIds: combined,
@@ -118,22 +151,22 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
   selectAllDocuments: (docIds) => {
     const { activeWorkspaceId, workspaces } = get();
-    if (!activeWorkspaceId) return;
+    const targetWsId = activeWorkspaceId || workspaces[0]?.id || 'default';
 
     set({
       workspaces: workspaces.map((w) =>
-        w.id === activeWorkspaceId ? { ...w, selectedDocumentIds: docIds } : w
+        w.id === targetWsId ? { ...w, selectedDocumentIds: docIds } : w
       ),
     });
   },
 
   deselectAllDocuments: () => {
     const { activeWorkspaceId, workspaces } = get();
-    if (!activeWorkspaceId) return;
+    const targetWsId = activeWorkspaceId || workspaces[0]?.id || 'default';
 
     set({
       workspaces: workspaces.map((w) =>
-        w.id === activeWorkspaceId ? { ...w, selectedDocumentIds: [] } : w
+        w.id === targetWsId ? { ...w, selectedDocumentIds: [] } : w
       ),
     });
   },
@@ -145,18 +178,23 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       return false;
     }
 
-    set((state) => ({
-      documents: [doc, ...state.documents],
-      workspaces: state.workspaces.map((w) =>
-        w.id === doc.workspaceId
-          ? {
-              ...w,
-              documentCount: w.documentCount + 1,
-              selectedDocumentIds: [...w.selectedDocumentIds, doc.id],
-            }
-          : w
-      ),
-    }));
+    set((state) => {
+      const targetWsId = doc.workspaceId || state.activeWorkspaceId || 'default';
+      return {
+        documents: [doc, ...state.documents],
+        workspaces: state.workspaces.map((w) =>
+          w.id === targetWsId || (!w.id && targetWsId === 'default')
+            ? {
+                ...w,
+                documentCount: w.documentCount + 1,
+                selectedDocumentIds: Array.from(
+                  new Set([...(w.selectedDocumentIds || []), doc.id])
+                ),
+              }
+            : w
+        ),
+      };
+    });
     return true;
   },
 

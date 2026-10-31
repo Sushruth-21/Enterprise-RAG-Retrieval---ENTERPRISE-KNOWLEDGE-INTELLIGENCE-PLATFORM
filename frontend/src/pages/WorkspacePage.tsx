@@ -85,7 +85,7 @@ export const WorkspacePage: React.FC = () => {
     return matchesSearch && matchesFormat;
   });
 
-  const selectedCount = activeWorkspace.selectedDocumentIds.filter((id) =>
+  const selectedCount = (activeWorkspace.selectedDocumentIds || []).filter((id) =>
     workspaceDocs.some((d) => d.id === id)
   ).length;
 
@@ -297,7 +297,7 @@ export const WorkspacePage: React.FC = () => {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <AnimatePresence mode="popLayout">
             {filteredDocs.map((doc) => {
-              const isSelected = activeWorkspace.selectedDocumentIds.includes(doc.id);
+              const isSelected = (activeWorkspace.selectedDocumentIds || []).includes(doc.id);
               return (
                 <DocumentCard
                   key={doc.id}

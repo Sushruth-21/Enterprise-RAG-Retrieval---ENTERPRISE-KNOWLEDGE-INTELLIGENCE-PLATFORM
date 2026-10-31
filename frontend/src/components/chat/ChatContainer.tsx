@@ -60,13 +60,8 @@ export const ChatContainer: React.FC = () => {
     messages[currentWorkspaceId] || INITIAL_MESSAGES[currentWorkspaceId] || [];
 
   const workspaceDocs = documents.filter((d) => !d.workspaceId || d.workspaceId === currentWorkspaceId || currentWorkspaceId === 'default');
-  const validSelectedIds = (activeWorkspace?.selectedDocumentIds || []).filter((id) =>
-    workspaceDocs.some((d) => d.id === id)
-  );
-  const activeDocs =
-    validSelectedIds.length > 0
-      ? workspaceDocs.filter((d) => validSelectedIds.includes(d.id))
-      : workspaceDocs;
+  const selectedDocIds = activeWorkspace?.selectedDocumentIds || [];
+  const activeDocs = workspaceDocs.filter((d) => selectedDocIds.includes(d.id));
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -91,12 +86,29 @@ export const ChatContainer: React.FC = () => {
 
     const nextList = [...currentMessages, userMsg];
     setMessages(currentWorkspaceId, nextList);
+
+    // If no documents are selected in the workspace, immediately notify user without calling backend
+    if (activeDocs.length === 0) {
+      const emptySelectionMsg: ChatMessage = {
+        id: `msg-${Date.now() + 1}`,
+        workspaceId: currentWorkspaceId,
+        role: 'assistant',
+        content:
+          'No documents are currently selected. Please select at least one document from the Active Documents checklist to retrieve information.',
+        timestamp: new Date().toISOString(),
+        coverage: 'insufficient_evidence',
+        confidenceScore: 0.0,
+        citations: [],
+      };
+      setMessages(currentWorkspaceId, [...nextList, emptySelectionMsg]);
+      return;
+    }
+
     setIsStreaming(true);
 
     // 1. Send query to backend intelligence service (Ollama Qwen + Knowledge Vault)
     try {
-      // If user selected a specific subset in the checklist, restrict to those; otherwise query active partition docs
-      const activeDocIds = validSelectedIds.length > 0 ? activeDocs.map((d) => d.id) : undefined;
+      const activeDocIds = activeDocs.map((d) => d.id);
       const res = await workspaceService.sendChatMessage({
         message: userPrompt,
         workspace_id: currentWorkspaceId,
@@ -172,9 +184,14 @@ export const ChatContainer: React.FC = () => {
     setIsStreaming(false);
   };
 
-  const handleClearHistory = () => {
+  const handleClearHistory = async () => {
     setMessages(currentWorkspaceId, []);
     setActiveCitation(null);
+    try {
+      await workspaceService.clearChatHistory(currentWorkspaceId);
+    } catch (err) {
+      console.warn('Failed to clear conversation history:', err);
+    }
   };
 
   return (
@@ -228,7 +245,7 @@ export const ChatContainer: React.FC = () => {
 
           <div className="space-y-1.5">
             {workspaceDocs.map((doc) => {
-              const isChecked = activeWorkspace?.selectedDocumentIds.includes(doc.id);
+              const isChecked = selectedDocIds.includes(doc.id);
               return (
                 <motion.div
                   key={doc.id}

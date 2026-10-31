@@ -712,10 +712,13 @@ class KnowledgeVault:
             params: List[Any] = []
 
             # 1. Filter by specific document IDs
-            if doc_ids and len(doc_ids) > 0:
-                placeholders = ",".join(["?"] * len(doc_ids))
-                conditions.append(f"document_id IN ({placeholders})")
-                params.extend(doc_ids)
+            if doc_ids is not None:
+                if len(doc_ids) > 0:
+                    placeholders = ",".join(["?"] * len(doc_ids))
+                    conditions.append(f"document_id IN ({placeholders})")
+                    params.extend(doc_ids)
+                else:
+                    return []
             elif doc_id:
                 conditions.append("document_id = ?")
                 params.append(doc_id)

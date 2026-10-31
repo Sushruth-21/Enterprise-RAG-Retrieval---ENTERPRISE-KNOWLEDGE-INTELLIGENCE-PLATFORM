@@ -30,6 +30,9 @@ class RetrievalClient:
         doc_ids: Optional[List[str]] = None,
         workspace_id: Optional[str] = None,
     ) -> List[DocumentPassage]:
+        if doc_ids is not None and len(doc_ids) == 0:
+            return []
+
         all_passages: List[DocumentPassage] = []
 
         # ── 1. Query Knowledge Vault (Local Persistent DB) ──
@@ -87,7 +90,7 @@ class RetrievalClient:
                 logger.error("Ingestion search error: %s", exc)
 
         # Filter strictly by doc_ids if specified (prevents returning previous sources)
-        if doc_ids and len(doc_ids) > 0:
+        if doc_ids is not None:
             doc_id_set = set(doc_ids)
             all_passages = [p for p in all_passages if p.document_id in doc_id_set]
 

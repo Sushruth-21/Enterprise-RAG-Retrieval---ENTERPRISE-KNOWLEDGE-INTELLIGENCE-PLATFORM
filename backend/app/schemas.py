@@ -67,7 +67,7 @@ class ChatRequest(BaseModel):
     message: Optional[str] = None
     workspace_id: Optional[str] = None
     conversation_id: Optional[str] = None
-    document_ids: Optional[List[str]] = Field(default_factory=list)
+    document_ids: Optional[List[str]] = None
     access_scope: Optional[str] = None
     use_local: Optional[bool] = None
 
@@ -253,7 +253,7 @@ class BatchRequest(BaseModel):
     # Person 4 sends questions: List[str] or Person 1 sends List[BatchQuestion]
     questions: Union[List[str], List[BatchQuestion]]
     workspace_id: Optional[str] = "default"
-    document_ids: Optional[List[str]] = Field(default_factory=list)
+    document_ids: Optional[List[str]] = None
     access_scope: str = "public"
 
 

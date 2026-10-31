@@ -67,6 +67,8 @@ async def batch_process(
             resp = await run_orchestrator(
                 question=q_text,
                 access_scope=effective_scope,
+                document_ids=request.document_ids,
+                workspace_id=request.workspace_id,
             )
             item_time_ms = max(1, int((time.perf_counter() - t0_item) * 1000))
             cov = "full" if resp.status == "answered" else ("partial" if resp.status == "partially_answered" else "insufficient_evidence")

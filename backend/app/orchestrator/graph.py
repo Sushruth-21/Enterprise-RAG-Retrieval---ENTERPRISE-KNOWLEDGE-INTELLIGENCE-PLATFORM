@@ -65,6 +65,9 @@ def understand_query(state: OrchestratorState) -> Dict[str, Any]:
 
 async def retrieve_context(state: OrchestratorState) -> Dict[str, Any]:
     """Fetch relevant passages strictly from active document partition and enforce RBAC clearance."""
+    if state.get("document_ids") is not None and len(state.get("document_ids")) == 0:
+        return {"retrieved_passages": [], "has_restricted_matches": False}
+
     client = RetrievalClient()
     passages = await client.hybrid_search(
         query=state["question"],
@@ -132,10 +135,11 @@ def merge_passages(state: OrchestratorState) -> Dict[str, Any]:
     merged: List[DocumentPassage] = []
 
     # Filter strictly to document_ids if specified (prevents previous sources from lingering)
-    allowed_docs = set(state.get("document_ids") or [])
+    allowed_docs = state.get("document_ids")
+    allowed_set = set(allowed_docs) if allowed_docs is not None else None
 
     for p in state["retrieved_passages"] + state["mcp_passages"]:
-        if allowed_docs and p.document_id not in allowed_docs:
+        if allowed_set is not None and p.document_id not in allowed_set:
             continue
         if p.chunk_id not in seen:
             seen.add(p.chunk_id)
@@ -176,6 +180,13 @@ async def generate_answer(state: OrchestratorState) -> Dict[str, Any]:
         await conversation_store.add_message(state["conversation_id"], "assistant", answer)
         return {"answer": answer, "model_used": "rbac-permission-guard"}
 
+    # Strict empty document selection guard
+    if state.get("document_ids") is not None and len(state.get("document_ids")) == 0:
+        answer = "No documents are currently selected. Please select one or more documents from the checklist to retrieve information."
+        await conversation_store.add_message(state["conversation_id"], "user", state["question"])
+        await conversation_store.add_message(state["conversation_id"], "assistant", answer)
+        return {"answer": answer, "model_used": "dataset-strict-grounding"}
+
     if not state["all_passages"] or not state["context"].strip():
         answer = "The provided documents do not contain information about this topic."
         await conversation_store.add_message(state["conversation_id"], "user", state["question"])
@@ -187,13 +198,14 @@ async def generate_answer(state: OrchestratorState) -> Dict[str, Any]:
         "Analyse the provided document passages deeply to produce an accurate, detailed, and factual answer.\n\n"
         "STRICT GROUNDING & CITATION RULES:\n"
         "1. Answer ONLY using verifiable facts directly stated in the context passages below.\n"
-        "2. If tables are present in the context, extract numbers, columns, and metrics accurately.\n"
-        "3. When facts are mentioned, cite the source using inline markers like [1], [2] matching the passage numbers.\n"
-        "4. If multiple versions of a document exist, prefer CURRENT versions over SUPERSEDED versions.\n"
-        "5. Do NOT invent, assume, or extrapolate information outside the context.\n"
-        "6. If the context does not explicitly contain the answer, say exactly: "
+        "2. Do NOT use previous conversation history to introduce or assume facts from documents not present in the CURRENT context passages below.\n"
+        "3. If tables are present in the context, extract numbers, columns, and metrics accurately.\n"
+        "4. When facts are mentioned, cite the source using inline markers like [1], [2] matching the passage numbers.\n"
+        "5. If multiple versions of a document exist, prefer CURRENT versions over SUPERSEDED versions.\n"
+        "6. Do NOT invent, assume, or extrapolate information outside the context.\n"
+        "7. If the context does not explicitly contain the answer, say exactly: "
         "'The provided documents do not contain information about this topic.'\n"
-        "7. Provide a clear, thorough explanation covering all parts of the question."
+        "8. Provide a clear, thorough explanation covering all parts of the question."
     )
 
     history = await conversation_store.get_context_string(state["conversation_id"])
@@ -268,6 +280,7 @@ def classify_status(state: OrchestratorState) -> Dict[str, Any]:
         or "access restricted:" in answer
         or "the provided documents do not contain information about this topic" in answer
         or "the uploaded documents do not contain facts to substantiate an answer" in answer
+        or "no documents are currently selected" in answer
         or not state["all_passages"]
     )
 
@@ -299,12 +312,13 @@ def build_citations(state: OrchestratorState) -> Dict[str, Any]:
     ):
         return {"citations": []}
 
-    allowed_docs = set(state.get("document_ids") or [])
+    allowed_docs = state.get("document_ids")
     passages = state["all_passages"]
-    if allowed_docs:
-        filtered = [p for p in passages if p.document_id in allowed_docs]
-        if filtered:
-            passages = filtered
+    if allowed_docs is not None:
+        passages = [p for p in passages if p.document_id in set(allowed_docs)]
+
+    if not passages:
+        return {"citations": []}
 
     seen_keys: set = set()
     unique_citations: List[Citation] = []

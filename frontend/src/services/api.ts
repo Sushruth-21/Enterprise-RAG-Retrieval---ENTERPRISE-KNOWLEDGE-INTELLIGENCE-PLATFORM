@@ -154,6 +154,15 @@ export const workspaceService = {
     }
   },
 
+  // DELETE /api/chat/{conversation_id} - Clear backend conversation history
+  async clearChatHistory(conversationId: string): Promise<void> {
+    try {
+      await apiClient.delete(`/api/chat/${conversationId}`);
+    } catch (err) {
+      console.warn('Failed to clear conversation history:', err);
+    }
+  },
+
   // POST /api/batch
   async sendBatchQuery(payload: {
     questions: string[];
