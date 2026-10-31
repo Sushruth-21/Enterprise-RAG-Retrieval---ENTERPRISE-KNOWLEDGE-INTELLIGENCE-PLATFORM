@@ -24,21 +24,21 @@ export const DashboardPage: React.FC = () => {
 
     const userMsg = {
       id: `msg-${Date.now()}`,
-      workspaceId: activeWorkspace?.id || 'ws-fin-2024',
+      workspaceId: activeWorkspace?.id || 'default',
       role: 'user' as const,
       content: query,
       timestamp: new Date().toISOString(),
     };
 
-    setMessages(activeWorkspace?.id || 'ws-fin-2024', [userMsg]);
+    setMessages(activeWorkspace?.id || 'default', [userMsg]);
     navigate('/chat');
   };
 
   const promptStarters = [
-    'What was our consolidated net revenue in Q3 2024?',
-    'What is our total cash and liquidity runway?',
-    'Summarize the disaster recovery failover steps',
-    'What are our GDPR data retention periods?',
+    'Summarize the core topics in the uploaded documents',
+    'What are the key requirements and action items?',
+    'Explain the specifications and findings in detail',
+    'Extract the primary metrics, dates, and conclusions',
   ];
 
   return (

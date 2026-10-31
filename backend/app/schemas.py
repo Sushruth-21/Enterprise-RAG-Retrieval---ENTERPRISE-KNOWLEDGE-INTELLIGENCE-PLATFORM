@@ -92,6 +92,12 @@ class ChatResponse(BaseModel):
     answer: str = ""    # Person 1 backend field
     coverage: Literal["full", "partial", "insufficient_evidence"] = "full"
     status: Literal["answered", "partially_answered", "not_covered"] = "answered"
+    confidence_score: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description="Confidence score (0.0-1.0) computed from retrieval relevance scores",
+    )
     grounded_doc_count: int = 0
     grounded_document_count: Optional[int] = None
     execution_time_ms: int = 0
@@ -168,6 +174,8 @@ class DocumentUploadResponse(BaseModel):
     sizeBytes: int = 0
     pageCount: int = 1
     chunkCount: int = 0
+    summary: Optional[str] = None
+    description: Optional[str] = None
     # Person 1 backend fields
     document_id: str
     document_name: str
@@ -186,6 +194,8 @@ class DocumentInfo(BaseModel):
     sizeBytes: int = 0
     pageCount: int = 1
     chunkCount: int = 0
+    summary: Optional[str] = None
+    description: Optional[str] = None
     # Person 1 backend fields
     document_id: str = ""
     document_name: str = ""

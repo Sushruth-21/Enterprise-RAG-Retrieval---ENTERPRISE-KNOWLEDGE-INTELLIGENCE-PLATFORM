@@ -17,6 +17,7 @@ import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { formatBytes, formatDate } from '@/lib/utils';
 import { INITIAL_CITATIONS, INITIAL_DOCUMENTS } from '@/mocks/initialData';
+import { apiClient } from '@/services/api';
 
 export const DocumentViewerPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
@@ -38,6 +39,19 @@ export const DocumentViewerPage: React.FC = () => {
   const [zoomScale, setZoomScale] = useState<number>(100);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [hasCopiedHash, setHasCopiedHash] = useState(false);
+  const [loadedChunks, setLoadedChunks] = useState<any[]>([]);
+
+  useEffect(() => {
+    if (!id) return;
+    apiClient.get(`/api/documents/${id}`)
+      .then((res) => {
+        const chunks = res.data?.chunks;
+        if (Array.isArray(chunks) && chunks.length > 0) {
+          setLoadedChunks(chunks);
+        }
+      })
+      .catch(() => {});
+  }, [id]);
 
   const pageContainerRef = useRef<HTMLDivElement>(null);
 
@@ -87,20 +101,73 @@ export const DocumentViewerPage: React.FC = () => {
   };
 
   const renderSimulatedPageContent = (page: number) => {
+    const pageChunks = loadedChunks.filter(
+      (c) => c.page_number === page || c.page === page || c.chunk_index + 1 === page
+    );
+
     const isFinDoc = doc.name.toLowerCase().includes('10q') || doc.name.toLowerCase().includes('financial') || doc.name.toLowerCase().includes('treasury');
     const isTechDoc = doc.name.toLowerCase().includes('k8s') || doc.name.toLowerCase().includes('failover') || doc.name.toLowerCase().includes('sharding');
     const hasEvidence = docCitations.some((c) => c.pageNumber === page);
     const evidenceItem = docCitations.find((c) => c.pageNumber === page);
 
+    if (pageChunks.length > 0) {
+      return (
+        <div className="space-y-6 text-enterprise-text leading-relaxed font-sans select-text">
+          <div className="pb-3 border-b border-surface-border flex items-center justify-between text-xs text-enterprise-dim font-mono">
+            <span>{doc.name}</span>
+            <span>PAGE {page} OF {totalPages}</span>
+          </div>
+
+          {hasEvidence && evidenceItem && (
+            <motion.div
+              initial={{ opacity: 0, scale: 0.98 }}
+              animate={{ opacity: 1, scale: 1 }}
+              className="p-4 rounded-2xl border-2 border-primary/40 bg-primary/5 text-enterprise-text text-xs shadow-subtle space-y-2"
+            >
+              <div className="flex items-center justify-between">
+                <span className="font-semibold text-primary flex items-center gap-1.5 font-mono text-[11px]">
+                  <ShieldCheck className="h-3.5 w-3.5" />
+                  Cited Evidence in Active Query
+                </span>
+                <span className="font-mono text-[11px] text-primary font-bold">
+                  {(evidenceItem.relevanceScore * 100).toFixed(0)}% Match
+                </span>
+              </div>
+              <p className="font-medium italic bg-white dark:bg-surface-elevated p-3 rounded-xl border border-primary/20 shadow-sm">
+                "{evidenceItem.snippet}"
+              </p>
+            </motion.div>
+          )}
+
+          <div className="space-y-4">
+            {pageChunks.map((chunk, i) => (
+              <div key={chunk.chunk_id || i} className="p-4 rounded-xl bg-surface-muted/30 border border-surface-border/60 space-y-2">
+                {chunk.section_context && (
+                  <h3 className="text-sm font-semibold text-primary font-mono tracking-tight">
+                    {chunk.section_context}
+                  </h3>
+                )}
+                <p className="text-sm text-enterprise-text leading-relaxed whitespace-pre-wrap font-sans">
+                  {chunk.content || chunk.content_preview}
+                </p>
+              </div>
+            ))}
+          </div>
+
+          <div className="pt-6 border-t border-surface-border text-center text-xs text-enterprise-dim font-mono">
+            CONFIDENTIAL — ENTERPRISE VERIFIED DOCUMENT
+          </div>
+        </div>
+      );
+    }
+
     return (
       <div className="space-y-6 text-enterprise-text leading-relaxed font-sans select-text">
-        {/* Document Header on Page */}
         <div className="pb-3 border-b border-surface-border flex items-center justify-between text-xs text-enterprise-dim font-mono">
           <span>{doc.name}</span>
           <span>PAGE {page} OF {totalPages}</span>
         </div>
 
-        {/* Evidence Highlight Callout */}
         {hasEvidence && evidenceItem && (
           <motion.div
             initial={{ opacity: 0, scale: 0.98 }}
@@ -122,85 +189,14 @@ export const DocumentViewerPage: React.FC = () => {
           </motion.div>
         )}
 
-        {/* Realistic Page Content */}
-        {isFinDoc ? (
-          <>
-            <h2 className="text-xl font-bold text-enterprise-text tracking-tight">
-              {page === 14
-                ? 'Part I. Financial Information — Item 2. Management Discussion and Analysis'
-                : `Section ${page}. Consolidated Financial Condition and Operating Results`}
-            </h2>
+        <h2 className="text-xl font-bold text-enterprise-text tracking-tight">
+          {doc.name} — Page {page}
+        </h2>
 
-            <p className="text-sm text-enterprise-text">
-              {page === 14 ? (
-                <mark className="bg-primary/15 text-enterprise-text px-1 py-0.5 rounded border border-primary/30 font-medium">
-                  Consolidated net revenue for the three months ended September 30, 2024 was $842.6 million, representing an 18.4% increase compared to $711.5 million in the prior year period.
-                </mark>
-              ) : (
-                'During the period referenced, total gross margin expanded by 140 basis points, reflecting improved operational efficiency in cloud infrastructure and software automation workflows across enterprise segments.'
-              )}
-            </p>
+        <div className="p-4 rounded-xl bg-surface-muted/30 border border-surface-border text-sm text-enterprise-text leading-relaxed whitespace-pre-wrap">
+          {doc.summary || `Extracted and indexed page ${page} of ${doc.name}. Content verified for grounded retrieval.`}
+        </div>
 
-            <div className="my-6 border border-surface-border rounded-2xl overflow-hidden bg-white dark:bg-surface-elevated shadow-subtle">
-              <div className="bg-surface-muted px-4 py-2 text-xs font-semibold text-enterprise-text border-b border-surface-border">
-                Condensed Consolidated Statement of Operations (in Millions)
-              </div>
-              <div className="divide-y divide-surface-border text-xs">
-                <div className="px-4 py-2 flex justify-between">
-                  <span className="text-enterprise-muted">Subscription Revenue</span>
-                  <span className="font-mono font-medium">$612.4</span>
-                </div>
-                <div className="px-4 py-2 flex justify-between">
-                  <span className="text-enterprise-muted">Professional Services</span>
-                  <span className="font-mono font-medium">$230.2</span>
-                </div>
-                <div className="px-4 py-2 flex justify-between bg-primary/5 font-semibold text-primary">
-                  <span>Total Consolidated Net Revenue</span>
-                  <span className="font-mono">$842.6</span>
-                </div>
-                <div className="px-4 py-2 flex justify-between">
-                  <span className="text-enterprise-muted">Cost of Revenue</span>
-                  <span className="font-mono">($218.9)</span>
-                </div>
-              </div>
-            </div>
-
-            <p className="text-sm text-enterprise-muted">
-              Operating expenses consisted of research and development, sales and marketing, and general administrative compliance overhead. Research and development expenses prioritised agentic reasoning pipelines and strict document isolation algorithms.
-            </p>
-          </>
-        ) : isTechDoc ? (
-          <>
-            <h2 className="text-xl font-bold text-enterprise-text tracking-tight">
-              {page === 1
-                ? 'RFC-409: Multi-Region Kubernetes Automated Failover Specification'
-                : `Topology & Cluster Architecture Specification (Page ${page})`}
-            </h2>
-
-            <p className="text-sm text-enterprise-text">
-              This document establishes the official high-availability architecture across US-East, US-West, and EU-Central cloud regions. State consistency is maintained using an asynchronous consensus quorum with automated DNS traffic deflection when heartbeat loss exceeds 1,500ms.
-            </p>
-
-            <div className="my-4 p-4 rounded-xl bg-surface-muted border border-surface-border font-mono text-xs text-primary space-y-1">
-              <div>// Cluster Health Probe Definition</div>
-              <div className="text-enterprise-text">livenessProbe:</div>
-              <div className="text-enterprise-text pl-4">httpGet: /healthz/readiness</div>
-              <div className="text-enterprise-text pl-4">initialDelaySeconds: 5</div>
-            </div>
-          </>
-        ) : (
-          <>
-            <h2 className="text-xl font-bold text-enterprise-text tracking-tight">
-              Article 30 Record of Processing Activities — Scope & Inventory
-            </h2>
-
-            <p className="text-sm text-enterprise-text">
-              Under General Data Protection Regulation (GDPR) mandates, this register details category categories, processing purposes, legal bases, recipients, and security safeguards applied to internal and client data sets.
-            </p>
-          </>
-        )}
-
-        {/* Page Footer */}
         <div className="pt-6 border-t border-surface-border text-center text-xs text-enterprise-dim font-mono">
           CONFIDENTIAL — ENTERPRISE VERIFIED DOCUMENT
         </div>

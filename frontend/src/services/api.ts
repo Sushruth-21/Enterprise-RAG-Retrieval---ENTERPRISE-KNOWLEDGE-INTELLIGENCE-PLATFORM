@@ -1,6 +1,6 @@
 import axios from 'axios';
 import { Workspace, DocumentItem, ChatMessage, Citation } from '@/types';
-import { INITIAL_WORKSPACES, INITIAL_DOCUMENTS, INITIAL_MESSAGES } from '@/mocks/initialData';
+import { INITIAL_WORKSPACES } from '@/mocks/initialData';
 import { useAuthStore } from '@/stores/useAuthStore';
 import { sanitizeFilename, validateQueryInput } from '@/lib/security';
 
@@ -8,7 +8,7 @@ export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localho
 
 export const apiClient = axios.create({
   baseURL: API_BASE_URL,
-  timeout: 10000,
+  timeout: 120000,
   headers: {
     'Content-Type': 'application/json',
   },
@@ -25,9 +25,6 @@ apiClient.interceptors.request.use((config) => {
   }
   return config;
 });
-
-const SIMULATED_LATENCY_MS = 200;
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export const workspaceService = {
   // GET /api/health
@@ -47,15 +44,19 @@ export const workspaceService = {
   async getDocuments(workspaceId?: string): Promise<DocumentItem[]> {
     try {
       const res = await apiClient.get<DocumentItem[]>('/api/documents', {
-        params: workspaceId ? { workspace_id: workspaceId } : undefined,
+        params: workspaceId ? { workspace_id: workspaceId, as_list: true } : { as_list: true },
+        headers: { 'x-frontend': 'true' },
       });
-      return res.data;
-    } catch {
-      await sleep(SIMULATED_LATENCY_MS);
-      if (workspaceId) {
-        return INITIAL_DOCUMENTS.filter((d) => d.workspaceId === workspaceId);
+      if (Array.isArray(res.data)) {
+        return res.data;
       }
-      return INITIAL_DOCUMENTS;
+      if (res.data && Array.isArray((res.data as any).documents)) {
+        return (res.data as any).documents;
+      }
+      return [];
+    } catch (err) {
+      console.warn('Failed to fetch documents from backend:', err);
+      return [];
     }
   },
 
@@ -63,6 +64,7 @@ export const workspaceService = {
   async uploadDocument(
     workspaceId: string,
     file: File,
+    isEmployeeAccessible: boolean = true,
     onProgress?: (percent: number) => void
   ): Promise<DocumentItem> {
     // Strict RBAC Guard: Block non-admins from uploading documents
@@ -74,7 +76,10 @@ export const workspaceService = {
     const safeName = sanitizeFilename(file.name);
     const formData = new FormData();
     formData.append('file', file, safeName);
-    formData.append('workspace_id', workspaceId);
+    formData.append('workspace_id', workspaceId || 'default');
+    formData.append('document_name', safeName);
+    formData.append('is_employee_accessible', String(isEmployeeAccessible));
+    formData.append('access_scope', isEmployeeAccessible ? 'public' : 'confidential');
 
     try {
       const res = await apiClient.post<DocumentItem>('/api/documents/upload', formData, {
@@ -87,28 +92,24 @@ export const workspaceService = {
         },
       });
       return res.data;
-    } catch {
-      if (onProgress) {
-        for (let p = 20; p <= 100; p += 30) {
-          onProgress(p);
-          await sleep(50);
-        }
-      }
-      const extension = (safeName.split('.').pop()?.toLowerCase() as DocumentItem['format']) || 'txt';
-      return {
-        id: `doc-${Date.now()}`,
-        workspaceId,
-        name: safeName,
-        format: extension,
-        sizeBytes: file.size,
-        uploadedAt: new Date().toISOString(),
-        status: 'ready',
-        pageCount: Math.max(1, Math.floor(file.size / 50000)),
-        chunksCount: Math.max(1, Math.floor(file.size / 15000)),
-        summary: `Document indexed from ${safeName}. Verified for strict lexical and semantic grounding.`,
-        version: 'v1.0',
-      };
+    } catch (err: any) {
+      console.error('Document upload failed on backend:', err);
+      const detail = err.response?.data?.detail || err.message || 'Document upload failed';
+      throw new Error(detail);
     }
+  },
+
+  // POST /api/documents/{documentId}/scope - Admin scope update
+  async updateDocumentScope(
+    docId: string,
+    accessScope: 'public' | 'confidential'
+  ): Promise<{ status: string; document_id: string; access_scope: string }> {
+    const isEmployeeAccessible = accessScope === 'public';
+    const res = await apiClient.post(`/api/documents/${docId}/scope`, {
+      access_scope: accessScope,
+      is_employee_accessible: isEmployeeAccessible,
+    });
+    return res.data;
   },
 
   // POST /api/chat
@@ -117,30 +118,30 @@ export const workspaceService = {
     workspace_id: string;
     document_ids?: string[];
     conversation_id?: string;
+    access_scope?: string;
   }): Promise<{
     answer: string;
     citations?: Citation[];
     coverage?: 'full' | 'partial' | 'insufficient_evidence';
     latency_ms?: number;
+    confidence_score?: number;
+    status?: string;
   }> {
     // Validate input against injection before dispatch
     const validation = validateQueryInput(payload.message);
+    const isAdm = useAuthStore.getState().isAdmin();
+    const effectiveScope = payload.access_scope || (isAdm ? 'confidential' : 'public');
+
     const cleanPayload = {
       ...payload,
+      access_scope: effectiveScope,
+      question: validation.isValid ? validation.sanitized : payload.message,
+      query: validation.isValid ? validation.sanitized : payload.message,
       message: validation.isValid ? validation.sanitized : payload.message,
     };
 
-    try {
-      const res = await apiClient.post('/api/chat', cleanPayload);
-      return res.data;
-    } catch {
-      await sleep(400);
-      return {
-        answer: `Processed under strict enterprise grounding.`,
-        coverage: 'full',
-        latency_ms: 320,
-      };
-    }
+    const res = await apiClient.post('/api/chat', cleanPayload);
+    return res.data;
   },
 
   // GET /api/chat/{conversation_id}/history
@@ -149,8 +150,7 @@ export const workspaceService = {
       const res = await apiClient.get<ChatMessage[]>(`/api/chat/${conversationId}/history`);
       return res.data;
     } catch {
-      await sleep(SIMULATED_LATENCY_MS);
-      return INITIAL_MESSAGES[conversationId] || [];
+      return [];
     }
   },
 
@@ -160,13 +160,8 @@ export const workspaceService = {
     workspace_id: string;
     document_ids?: string[];
   }): Promise<any> {
-    try {
-      const res = await apiClient.post('/api/batch', payload);
-      return res.data;
-    } catch {
-      await sleep(500);
-      throw new Error('Fallback to local evaluation engine');
-    }
+    const res = await apiClient.post('/api/batch', payload);
+    return res.data;
   },
 
   async getWorkspaces(): Promise<Workspace[]> {

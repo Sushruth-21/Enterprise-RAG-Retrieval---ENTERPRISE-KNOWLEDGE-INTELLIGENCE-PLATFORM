@@ -55,24 +55,32 @@ export const ChatContainer: React.FC = () => {
   const activeWorkspace =
     workspaces.find((w) => w.id === activeWorkspaceId) || workspaces[0];
 
-  const currentWorkspaceId = activeWorkspace?.id || 'ws-fin-2024';
+  const currentWorkspaceId = activeWorkspace?.id || 'default';
   const currentMessages =
     messages[currentWorkspaceId] || INITIAL_MESSAGES[currentWorkspaceId] || [];
 
-  const workspaceDocs = documents.filter((d) => d.workspaceId === currentWorkspaceId);
-  const activeDocs = workspaceDocs.filter((d) =>
-    activeWorkspace?.selectedDocumentIds.includes(d.id)
+  const workspaceDocs = documents.filter((d) => !d.workspaceId || d.workspaceId === currentWorkspaceId || currentWorkspaceId === 'default');
+  const validSelectedIds = (activeWorkspace?.selectedDocumentIds || []).filter((id) =>
+    workspaceDocs.some((d) => d.id === id)
   );
+  const activeDocs =
+    validSelectedIds.length > 0
+      ? workspaceDocs.filter((d) => validSelectedIds.includes(d.id))
+      : workspaceDocs;
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [currentMessages, isStreaming]);
 
-  const allConversationCitations: Citation[] = currentMessages.flatMap(
-    (m) => m.citations || []
+  const messageForActiveCitation = currentMessages.find((m) =>
+    m.citations?.some((c) => c.id === activeCitation?.id)
   );
+  const latestAssistantMsg = [...currentMessages].reverse().find((m) => m.role === 'assistant');
+  const activeSources: Citation[] =
+    messageForActiveCitation?.citations || latestAssistantMsg?.citations || [];
 
   const handleSendMessage = async (userPrompt: string) => {
+    setActiveCitation(null);
     const userMsg: ChatMessage = {
       id: `msg-${Date.now()}`,
       workspaceId: currentWorkspaceId,
@@ -85,9 +93,10 @@ export const ChatContainer: React.FC = () => {
     setMessages(currentWorkspaceId, nextList);
     setIsStreaming(true);
 
-    // 1. Attempt Real Backend API Call (Ollama + PgVector Hybrid Retrieval)
+    // 1. Send query to backend intelligence service (Ollama Qwen + Knowledge Vault)
     try {
-      const activeDocIds = activeDocs.map((d) => d.id);
+      // If user selected a specific subset in the checklist, restrict to those; otherwise query active partition docs
+      const activeDocIds = validSelectedIds.length > 0 ? activeDocs.map((d) => d.id) : undefined;
       const res = await workspaceService.sendChatMessage({
         message: userPrompt,
         workspace_id: currentWorkspaceId,
@@ -95,17 +104,33 @@ export const ChatContainer: React.FC = () => {
         conversation_id: currentWorkspaceId,
       });
 
-      if (res && res.answer && res.answer !== 'Processed under strict enterprise grounding.') {
+      if (res && res.answer) {
+        const rawConf = (res as any).confidence_score ?? (res as any).confidenceScore;
+        const confidenceScore = typeof rawConf === 'number'
+          ? rawConf
+          : (res.coverage === 'full' ? 0.92 : res.coverage === 'partial' ? 0.65 : 0.0);
+
+        const mappedCitations: Citation[] = (res.citations || []).map((c: any, idx: number) => ({
+          id: c.id || c.chunk_id || ('cit-' + Date.now() + '-' + idx),
+          documentId: c.documentId || c.document_id || activeDocs[0]?.id || '',
+          documentName: c.documentName || c.document_name || activeDocs[0]?.name || 'Uploaded Document',
+          pageNumber: c.pageNumber ?? c.page_number ?? c.page ?? 1,
+          chunkId: c.chunkId || c.chunk_id,
+          snippet: c.snippet || c.section || '',
+          relevanceScore: c.relevanceScore ?? c.relevance_score ?? 0.85,
+        }));
+
         const assistantMsg: ChatMessage = {
           id: `msg-resp-${Date.now()}`,
           workspaceId: currentWorkspaceId,
           role: 'assistant',
           content: res.answer,
           timestamp: new Date().toISOString(),
-          coverage: res.coverage || 'full',
-          groundedDocCount: res.citations?.length || activeDocs.length,
-          executionTimeMs: res.latency_ms || 320,
-          citations: res.citations || [],
+          coverage: res.coverage || (mappedCitations.length > 0 ? 'full' : 'insufficient_evidence'),
+          groundedDocCount: mappedCitations.length || activeDocs.length,
+          executionTimeMs: res.latency_ms || (res as any).execution_time_ms || 320,
+          confidenceScore: confidenceScore,
+          citations: mappedCitations,
         };
 
         setMessages(currentWorkspaceId, [...nextList, assistantMsg]);
@@ -113,113 +138,33 @@ export const ChatContainer: React.FC = () => {
 
         if (assistantMsg.citations && assistantMsg.citations.length > 0) {
           setActiveCitation(assistantMsg.citations[0]);
+          setEvidencePanelOpen(true);
+        } else {
+          setActiveCitation(null);
         }
         return;
       }
-    } catch (err) {
-      console.warn('Real backend chat request fallback engaged:', err);
-    }
-
-    // 2. Simulated Fallback when backend is disconnected
-    const lower = userPrompt.toLowerCase();
-    const isUnanswerable =
-      lower.includes('weather') ||
-      lower.includes('quantum') ||
-      lower.includes('stock price tomorrow') ||
-      lower.includes('movie');
-
-    streamTimeoutRef.current = setTimeout(() => {
-      let assistantMsg: ChatMessage;
-
-      if (isUnanswerable || activeDocs.length === 0) {
-        assistantMsg = {
-          id: `msg-resp-${Date.now()}`,
-          workspaceId: currentWorkspaceId,
-          role: 'assistant',
-          content: `I could not find sufficient factual evidence in your ${activeDocs.length} active documents to answer this question.\n\nBecause Enterprise Query is strictly grounded to your uploaded materials, it cannot use ungrounded external assumptions. Please upload documents covering this topic or select relevant indexed files.`,
-          timestamp: new Date().toISOString(),
-          coverage: 'insufficient_evidence',
-          groundedDocCount: activeDocs.length,
-          executionTimeMs: 240,
-        };
-      } else if (lower.includes('revenue') || lower.includes('q3')) {
-        assistantMsg = {
-          id: `msg-resp-${Date.now()}`,
-          workspaceId: currentWorkspaceId,
-          role: 'assistant',
-          content: `Based on verified evidence from **${activeDocs[0]?.name || 'uploaded reports'}**:\n\n1. **Q3 2024 Net Revenue**: Total consolidated net revenue for the three months ended September 30, 2024 reached **$842.6 million**, an **18.4% YoY increase** compared to $711.5 million in the prior year period [1].\n2. **Operating Drivers**: Revenue growth was primarily propelled by subscription expansion across tier-1 enterprise accounts.\n\n*All statistics verified through lexical chunk hashes.*`,
-          timestamp: new Date().toISOString(),
-          coverage: 'full',
-          groundedDocCount: activeDocs.length,
-          executionTimeMs: 410,
-          citations: [
-            {
-              id: `cit-${Date.now()}-1`,
-              documentId: activeDocs[0]?.id || 'doc-1',
-              documentName: activeDocs[0]?.name || 'Q3_2024_Form_10Q_Consolidated.pdf',
-              pageNumber: 14,
-              snippet:
-                'Consolidated net revenue for the three months ended September 30, 2024 was $842.6 million, representing an 18.4% increase compared to $711.5 million in the prior year period.',
-              relevanceScore: 0.98,
-            },
-          ],
-        };
-      } else if (lower.includes('runway') || lower.includes('cash') || lower.includes('treasury')) {
-        assistantMsg = {
-          id: `msg-resp-${Date.now()}`,
-          workspaceId: currentWorkspaceId,
-          role: 'assistant',
-          content: `According to your uploaded Treasury Liquidity documentation:\n\n- **Total Cash & Liquid Holdings**: Total cash, cash equivalents, and short-term liquid investments stood at **$1.42 billion** as of October 1, 2024 [1].\n- **Runway Horizon**: This capital base affords approximately **18.5 months of operational runway** under baseline cash burn assumptions.\n- **Hedging**: Comprehensive currency hedging is maintained across EMEA currencies.`,
-          timestamp: new Date().toISOString(),
-          coverage: 'full',
-          groundedDocCount: activeDocs.length,
-          executionTimeMs: 380,
-          citations: [
-            {
-              id: `cit-${Date.now()}-2`,
-              documentId: activeDocs[1]?.id || activeDocs[0]?.id || 'doc-2',
-              documentName: activeDocs[1]?.name || 'Treasury_Liquidity_Report_Oct.pdf',
-              pageNumber: 6,
-              snippet:
-                'Total cash, cash equivalents, and short-term liquid investments stood at $1.42 billion as of October 1, 2024, providing 18.5 months of operational runway.',
-              relevanceScore: 0.95,
-            },
-          ],
-        };
-      } else {
-        assistantMsg = {
-          id: `msg-resp-${Date.now()}`,
-          workspaceId: currentWorkspaceId,
-          role: 'assistant',
-          content: `Here is the verified information found in **${activeDocs[0]?.name}** regarding your query:\n\n- The uploaded document outlines operating procedures, specifications, and governance parameters [1].\n- All reasoning is bound to the extracted passages without external internet reliance.`,
-          timestamp: new Date().toISOString(),
-          coverage: 'full',
-          groundedDocCount: activeDocs.length,
-          executionTimeMs: 440,
-          citations: [
-            {
-              id: `cit-${Date.now()}-3`,
-              documentId: activeDocs[0]?.id || 'doc-1',
-              documentName: activeDocs[0]?.name || 'Document_Extract.pdf',
-              pageNumber: 2,
-              snippet:
-                'Operating procedures and system architectures defined herein are verified under strict enterprise compliance parameters.',
-              relevanceScore: 0.91,
-            },
-          ],
-        };
-      }
-
+    } catch (err: any) {
+      console.warn('Real backend chat request failed:', err);
+      const assistantMsg: ChatMessage = {
+        id: `msg-resp-${Date.now()}`,
+        workspaceId: currentWorkspaceId,
+        role: 'assistant',
+        content: `Unable to connect to knowledge backend: ${err.message || 'connection error'}. Please verify the backend service is running on port 8000.`,
+        timestamp: new Date().toISOString(),
+        coverage: 'insufficient_evidence',
+        groundedDocCount: 0,
+        executionTimeMs: 120,
+        confidenceScore: 0.0,
+      };
       setMessages(currentWorkspaceId, [...nextList, assistantMsg]);
       setIsStreaming(false);
-
-      if (assistantMsg.citations && assistantMsg.citations.length > 0) {
-        setActiveCitation(assistantMsg.citations[0]);
-      }
-    }, 1000);
+      return;
+    }
   };
 
-  const handleStopStreaming = () => {
+
+    const handleStopStreaming = () => {
     if (streamTimeoutRef.current) {
       clearTimeout(streamTimeoutRef.current);
       streamTimeoutRef.current = null;
@@ -368,9 +313,9 @@ export const ChatContainer: React.FC = () => {
             >
               <BookOpen className="h-4 w-4 text-primary" />
               <span className="text-sm font-medium">Sources</span>
-              {allConversationCitations.length > 0 && (
+              {activeSources.length > 0 && (
                 <span className="h-4.5 px-2 rounded-full bg-primary text-white text-xs font-mono font-bold flex items-center justify-center">
-                  {allConversationCitations.length}
+                  {activeSources.length}
                 </span>
               )}
             </motion.button>
@@ -427,7 +372,7 @@ export const ChatContainer: React.FC = () => {
           >
             <EvidenceInspector
               citation={activeCitation}
-              allCitations={allConversationCitations}
+              allCitations={activeSources}
               onSelectCitation={(cit) => setActiveCitation(cit)}
               onClose={() => setEvidencePanelOpen(false)}
             />

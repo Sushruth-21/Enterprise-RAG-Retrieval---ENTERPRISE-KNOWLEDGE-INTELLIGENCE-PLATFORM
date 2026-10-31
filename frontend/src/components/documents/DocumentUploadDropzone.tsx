@@ -6,7 +6,7 @@ import { formatBytes } from '@/lib/utils';
 import { DocumentFormat } from '@/types';
 
 interface DocumentUploadDropzoneProps {
-  onUpload: (file: File) => Promise<void>;
+  onUpload: (files: File[]) => Promise<void>;
   isUploading?: boolean;
   uploadProgress?: number;
   currentProcessingStep?: string;
@@ -33,7 +33,7 @@ export const DocumentUploadDropzone: React.FC<DocumentUploadDropzoneProps> = ({
       return false;
     }
     if (file.size > MAX_FILE_SIZE) {
-      setError(`File exceeds 50MB limit (${formatBytes(file.size)}).`);
+      setError(`File "${file.name}" exceeds 50MB limit (${formatBytes(file.size)}).`);
       return false;
     }
     return true;
@@ -52,21 +52,23 @@ export const DocumentUploadDropzone: React.FC<DocumentUploadDropzoneProps> = ({
   const handleDrop = async (e: React.DragEvent) => {
     e.preventDefault();
     setIsDragOver(false);
-    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-      const file = e.dataTransfer.files[0];
-      if (validateAndStageFile(file)) {
-        await onUpload(file);
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      const allFiles = Array.from(e.dataTransfer.files);
+      const validFiles = allFiles.filter((f) => validateAndStageFile(f));
+      if (validFiles.length > 0) {
+        await onUpload(validFiles);
       }
     }
   };
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files[0]) {
-      const file = e.target.files[0];
-      if (validateAndStageFile(file)) {
-        await onUpload(file);
-        if (fileInputRef.current) fileInputRef.current.value = '';
+    if (e.target.files && e.target.files.length > 0) {
+      const allFiles = Array.from(e.target.files);
+      const validFiles = allFiles.filter((f) => validateAndStageFile(f));
+      if (validFiles.length > 0) {
+        await onUpload(validFiles);
       }
+      if (fileInputRef.current) fileInputRef.current.value = '';
     }
   };
 
@@ -86,6 +88,7 @@ export const DocumentUploadDropzone: React.FC<DocumentUploadDropzoneProps> = ({
         <input
           ref={fileInputRef}
           type="file"
+          multiple
           accept=".pdf,.docx,.txt,.md"
           className="hidden"
           onChange={handleFileChange}
@@ -122,7 +125,7 @@ export const DocumentUploadDropzone: React.FC<DocumentUploadDropzoneProps> = ({
                 <span className="text-primary hover:underline">browse files</span>
               </p>
               <p className="text-[11px] text-enterprise-muted mt-0.5">
-                PDF, DOCX, TXT, and Markdown up to 50MB
+                Upload single or multiple PDF, DOCX, TXT, MD files (up to 50MB each)
               </p>
             </div>
           </div>

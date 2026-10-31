@@ -14,6 +14,8 @@ export interface DocumentItem {
   chunksCount?: number;
   summary?: string;
   version: string;
+  accessScope?: 'public' | 'confidential';
+  isEmployeeAccessible?: boolean;
 }
 
 export interface Workspace {
@@ -56,6 +58,7 @@ export interface ChatMessage {
   isStreaming?: boolean;
   groundedDocCount?: number;
   executionTimeMs?: number;
+  confidenceScore?: number;
 }
 
 export interface BatchQueryItem {

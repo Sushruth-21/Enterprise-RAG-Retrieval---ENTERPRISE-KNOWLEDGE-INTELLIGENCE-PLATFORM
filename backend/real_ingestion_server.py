@@ -51,6 +51,42 @@ def health():
     }
 
 
+def _build_document_description(
+    parsed_doc: ParsedDocument, chunks: list, filename: str
+) -> str:
+    """Generate a meaningful document description from actual parsed content
+    instead of a generic placeholder. Uses the first few chunks to summarise."""
+    parts: List[str] = []
+
+    # Use the parsed document title if available
+    if parsed_doc.title and parsed_doc.title.lower() != filename.lower():
+        parts.append(parsed_doc.title.strip())
+
+    # Collect unique section headings (first 5)
+    seen_sections: set = set()
+    for chunk in chunks:
+        ctx = getattr(chunk, "section_context", "") or ""
+        if ctx and ctx not in seen_sections and len(seen_sections) < 5:
+            seen_sections.add(ctx)
+    if seen_sections:
+        parts.append("Sections: " + " | ".join(sorted(seen_sections)))
+
+    # Use the first chunk's content as an excerpt (first 200 chars)
+    if chunks:
+        first_text = (getattr(chunks[0], "content", "") or "").strip()
+        if first_text:
+            excerpt = first_text[:200].rstrip()
+            if len(first_text) > 200:
+                excerpt += "…"
+            parts.append(excerpt)
+
+    if parts:
+        return " — ".join(parts)
+
+    # Absolute fallback
+    return f"{filename} ({parsed_doc.total_pages} pages)"
+
+
 @app.post("/ingest")
 async def ingest(
     file: UploadFile = File(...),
@@ -106,6 +142,9 @@ async def ingest(
         section_count = len([e for e in parsed_doc.elements if "HEADING" in str(e.element_type)])
         table_count = len(parsed_doc.tables)
 
+        # Build a meaningful description from the actual parsed content
+        description = _build_document_description(parsed_doc, chunks, filename)
+
         doc_entry = {
             "document_id": doc_id,
             "document_name": filename,
@@ -121,18 +160,28 @@ async def ingest(
             "organization_id": organization_id,
             "supersedes_id": supersedes_id or None,
             "status": "completed",
+            "description": description,
         }
 
-        # Store chunks metadata
+        # Store FULL chunk content (not just previews) so /search can find them
         _documents_store[doc_id] = doc_entry
         _document_chunks_store[doc_id] = [
             {
                 "chunk_id": str(c.chunk_id),
+                "document_id": doc_id,
+                "document_name": filename,
+                "version": version_label,
+                "is_current": True,
                 "index": c.chunk_index,
+                "chunk_index": c.chunk_index,
                 "section_context": c.section_context,
+                "section": c.section_context,
                 "page_number": c.page_number,
+                "page": c.page_number,
                 "chunk_hash": c.chunk_hash,
-                "content_preview": c.content[:150] + ("..." if len(c.content) > 150 else ""),
+                "content": c.content,
+                "access_scope": "public",
+                "score": 0.0,
             }
             for c in chunks
         ]
@@ -186,6 +235,63 @@ def get_document(document_id: str):
         **doc,
         "chunks": _document_chunks_store.get(document_id, []),
     }
+
+
+@app.get("/documents/{document_id}/chunks")
+def get_document_chunks(document_id: str):
+    """Returns chunks for a specific document."""
+    chunks = _document_chunks_store.get(document_id)
+    if chunks is None:
+        raise HTTPException(status_code=404, detail="Document not found")
+    return chunks
+
+
+@app.post("/search")
+def search_chunks(query: dict):
+    """Keyword search across all ingested document chunks.
+    Returns results in DocumentPassage-compatible format so the
+    retrieval client fallback can use them directly."""
+    q = query.get("query", "").lower()
+    top_k = query.get("top_k", 10)
+    doc_id_filter = query.get("doc_id")
+
+    if not q:
+        return []
+
+    results = []
+    query_words = [w for w in q.split() if len(w) >= 3]
+
+    for did, chunks in _document_chunks_store.items():
+        if doc_id_filter and did != doc_id_filter:
+            continue
+        for chunk in chunks:
+            content = chunk.get("content", "")
+            content_lower = content.lower()
+            if not content_lower:
+                continue
+
+            # Score by keyword overlap
+            matches = sum(1 for w in query_words if w in content_lower)
+            if matches == 0:
+                continue
+
+            score = round(min((matches / max(len(query_words), 1)) * 1.2, 1.0), 4)
+
+            results.append({
+                "chunk_id": chunk.get("chunk_id", ""),
+                "document_id": did,
+                "document_name": chunk.get("document_name", ""),
+                "version": chunk.get("version", "1.0"),
+                "is_current": chunk.get("is_current", True),
+                "section": chunk.get("section_context", chunk.get("section", "")),
+                "page": chunk.get("page_number", chunk.get("page", 1)),
+                "content": content,
+                "access_scope": chunk.get("access_scope", "public"),
+                "score": score,
+            })
+
+    results.sort(key=lambda x: x["score"], reverse=True)
+    return results[:top_k]
 
 
 @app.get("/status/{version_id}")

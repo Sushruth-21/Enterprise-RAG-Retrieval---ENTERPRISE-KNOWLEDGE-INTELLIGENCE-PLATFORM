@@ -1,104 +1,27 @@
 """
 Mock Retrieval Server — simulates Person 3's retrieval service.
 Run on port 8002 while Person 3 builds the real thing.
+Augmented with live lookup to Knowledge Vault and Ingestion Service (port 8003).
 
 Usage:
     uvicorn mock_retrieval_server:app --port 8002
 """
 from __future__ import annotations
-from datetime import datetime
-from typing import List, Optional
+import logging
 import re
-import uuid
+from typing import List, Optional
+import httpx
 
 from fastapi import FastAPI
 from pydantic import BaseModel
 
+logger = logging.getLogger("mock_retrieval")
+logging.basicConfig(level=logging.INFO)
+
 app = FastAPI(title="Mock Retrieval Server", version="1.0.0")
 
-# ── Mock passage data ──────────────────────────────────────────
-MOCK_PASSAGES = [
-    {
-        "chunk_id": "chunk_001",
-        "document_id": "policy_travel_v2",
-        "document_name": "Travel Policy",
-        "version": "2.0",
-        "is_current": True,
-        "section": "5.2",
-        "page": 12,
-        "content": (
-            "Employees are entitled to claim accommodation expenses up to ₹5,000 per night "
-            "for domestic travel and USD 150 per night for international travel. "
-            "All claims must be submitted within 30 days of travel with original receipts."
-        ),
-        "access_scope": "public",
-        "score": 0.95,
-    },
-    {
-        "chunk_id": "chunk_002",
-        "document_id": "policy_travel_v2",
-        "document_name": "Travel Policy",
-        "version": "2.0",
-        "is_current": True,
-        "section": "3.1",
-        "page": 7,
-        "content": (
-            "Business class travel is permitted only for flights exceeding 6 hours. "
-            "Economy class is mandatory for all flights under 6 hours. "
-            "Approval from department head is required for any upgrade."
-        ),
-        "access_scope": "public",
-        "score": 0.88,
-    },
-    {
-        "chunk_id": "chunk_003",
-        "document_id": "policy_it_security_v1",
-        "document_name": "IT Security Policy",
-        "version": "1.1",
-        "is_current": True,
-        "section": "3.1",
-        "page": 5,
-        "content": (
-            "All employee passwords must be a minimum of 12 characters and include at least "
-            "one uppercase letter, one lowercase letter, one number, and one special character. "
-            "Passwords must be changed every 90 days. Password reuse for the last 10 passwords is prohibited."
-        ),
-        "access_scope": "public",
-        "score": 0.82,
-    },
-    {
-        "chunk_id": "chunk_004",
-        "document_id": "policy_hr_handbook_v3",
-        "document_name": "HR Employee Handbook",
-        "version": "3.0",
-        "is_current": True,
-        "section": "7.4",
-        "page": 24,
-        "content": (
-            "Annual leave entitlement is 21 days per year for employees with less than 5 years of service, "
-            "and 28 days per year for employees with 5 or more years of service. "
-            "Leave must be approved by the direct manager at least 2 weeks in advance."
-        ),
-        "access_scope": "public",
-        "score": 0.78,
-    },
-    {
-        "chunk_id": "chunk_005",
-        "document_id": "policy_travel_v1",
-        "document_name": "Travel Policy",
-        "version": "1.0",
-        "is_current": False,
-        "section": "5.2",
-        "page": 10,
-        "content": (
-            "[SUPERSEDED] Employees were previously entitled to claim accommodation expenses up to "
-            "₹3,500 per night for domestic travel. This policy was superseded by Travel Policy v2.0 "
-            "effective January 2024."
-        ),
-        "access_scope": "public",
-        "score": 0.60,
-    },
-]
+# Clean production: No hardcoded mock documents or policies
+MOCK_PASSAGES: List[dict] = []
 
 
 class SearchRequest(BaseModel):
@@ -114,55 +37,79 @@ def health():
 
 
 @app.post("/search")
-def search(req: SearchRequest) -> List[dict]:
-    """Return mock passages relevant to the query."""
-    results = [p for p in MOCK_PASSAGES if p["access_scope"] == req.access_scope or req.access_scope == "public"]
-    if req.doc_id:
-        results = [p for p in results if p["document_id"] == req.doc_id]
+async def search(req: SearchRequest) -> List[dict]:
+    """Return passages relevant to the query from Knowledge Vault and Ingestion Service."""
+    all_candidates: List[dict] = list(MOCK_PASSAGES)
 
-    stop_words = {
-        "what", "which", "where", "when", "who", "how", "does", "are",
-        "the", "and", "for", "from", "with", "that", "this", "per",
-    }
-    query_terms = {
-        term
-        for term in re.findall(r"\b[a-zA-Z]{3,}\b", req.query.lower())
-        if term not in stop_words
-    }
-    if not query_terms:
-        return []
+    # 1. Check local Knowledge Vault directly
+    try:
+        from app.storage.vault import KnowledgeVault
+        vault = KnowledgeVault.get_instance()
+        vault_passages = vault.search_chunks(req.query, doc_id=req.doc_id, top_k=req.top_k)
+        for p in vault_passages:
+            all_candidates.append(p.model_dump())
+    except Exception as exc:
+        logger.debug("Knowledge Vault lookup in mock retrieval: %s", exc)
 
-    ranked = []
-    for passage in results:
-        passage_terms = set(
-            re.findall(
-                r"\b[a-zA-Z]{3,}\b",
-                f"{passage['document_name']} {passage['content']}".lower(),
+    # 2. Attempt to pull real uploaded document chunks from Ingestion Service (Port 8003)
+    try:
+        async with httpx.AsyncClient(timeout=4) as client:
+            resp = await client.post(
+                "http://localhost:8003/search",
+                json={"query": req.query, "top_k": req.top_k, "doc_id": req.doc_id},
             )
-        )
-        overlap = query_terms & passage_terms
-        if overlap:
-            relevance = len(overlap) / len(query_terms)
-            ranked.append(
-                (
-                    passage["score"] * (0.5 + 0.5 * relevance),
-                    {**passage, "score": relevance},
-                )
-            )
+            if resp.status_code == 200:
+                ingested_passages = resp.json()
+                if ingested_passages:
+                    all_candidates.extend(ingested_passages)
+    except Exception as exc:
+        logger.debug("Could not query ingestion service: %s", exc)
 
-    ranked.sort(key=lambda item: item[0], reverse=True)
-    return [passage for _, passage in ranked[: req.top_k]]
+    q_lower = req.query.lower()
+    q_words = [w for w in re.findall(r"\w+", q_lower) if len(w) > 2]
+
+    results = []
+    seen_ids = set()
+    for p in all_candidates:
+        if p["chunk_id"] in seen_ids:
+            continue
+        if req.doc_id and p["document_id"] != req.doc_id:
+            continue
+
+        content_lower = p["content"].lower()
+        if not q_words or any(w in content_lower for w in q_words) or (p.get("score", 0) > 0.5):
+            results.append(p)
+            seen_ids.add(p["chunk_id"])
+
+    results.sort(key=lambda x: x.get("score", 0.5), reverse=True)
+    return results[: req.top_k]
 
 
 @app.get("/passage/{chunk_id}")
 def get_passage(chunk_id: str):
-    """Return a single passage by chunk_id."""
+    # Check Knowledge Vault
+    try:
+        from app.storage.vault import KnowledgeVault
+        vault = KnowledgeVault.get_instance()
+        with vault._get_connection() as conn:
+            row = conn.execute("SELECT * FROM vault_chunks WHERE id = ?", (chunk_id,)).fetchone()
+            if row:
+                return {
+                    "chunk_id": row["id"],
+                    "document_id": row["document_id"],
+                    "document_name": row["document_name"],
+                    "version": "1.0",
+                    "is_current": True,
+                    "section": row["section_context"],
+                    "page": row["page_number"],
+                    "content": row["content"],
+                    "access_scope": "public",
+                    "score": 0.9,
+                }
+    except Exception:
+        pass
+
     for p in MOCK_PASSAGES:
         if p["chunk_id"] == chunk_id:
             return p
-    return None
-
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8002)
+    return {"error": "not found"}

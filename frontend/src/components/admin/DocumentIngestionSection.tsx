@@ -9,6 +9,8 @@ import {
   Layers,
   ShieldCheck,
   FileSpreadsheet,
+  Lock,
+  Users,
 } from 'lucide-react';
 import { useWorkspaceStore } from '@/stores/useWorkspaceStore';
 import { workspaceService } from '@/services/api';
@@ -23,48 +25,47 @@ export const DocumentIngestionSection: React.FC = () => {
   const [uploadProgress, setUploadProgress] = useState(0);
   const [processingStep, setProcessingStep] = useState('');
   const [recentUploads, setRecentUploads] = useState<string[]>([]);
+  const [isEmployeeAccessible, setIsEmployeeAccessible] = useState<boolean>(true);
 
   const activeWorkspace =
     workspaces.find((w) => w.id === activeWorkspaceId) || workspaces[0];
 
-  const handleFileUpload = async (file: File) => {
-    if (!activeWorkspace) return;
+  const handleFileUpload = async (files: File[]) => {
+    if (!activeWorkspace || files.length === 0) return;
 
     setIsUploading(true);
-    setUploadProgress(15);
-    setProcessingStep('Validating file layout & text...');
+    const totalFiles = files.length;
 
-    try {
-      setTimeout(() => {
-        setUploadProgress(45);
-        setProcessingStep('Extracting semantic text chunks...');
-      }, 350);
+    for (let i = 0; i < totalFiles; i++) {
+      const file = files[i];
+      const prefix = totalFiles > 1 ? `[${i + 1}/${totalFiles}] ` : '';
+      setProcessingStep(`${prefix}Analyzing "${file.name}" with deep layout & table parsing...`);
+      setUploadProgress(25);
 
-      setTimeout(() => {
-        setUploadProgress(80);
-        setProcessingStep('Generating vector embeddings...');
-      }, 700);
+      try {
+        const newDoc = await workspaceService.uploadDocument(
+          activeWorkspace.id,
+          file,
+          isEmployeeAccessible,
+          (percent) => {
+            setUploadProgress(Math.max(percent, 40));
+          }
+        );
 
-      const newDoc = await workspaceService.uploadDocument(
-        activeWorkspace.id,
-        file,
-        (percent) => {
-          setUploadProgress(Math.max(percent, 85));
-        }
-      );
-
-      setTimeout(() => {
-        setUploadProgress(100);
-        setProcessingStep('Indexed & partition-isolated.');
         addDocument(newDoc);
         setRecentUploads((prev) => [newDoc.id, ...prev]);
-        setIsUploading(false);
-        setUploadProgress(0);
-      }, 1000);
-    } catch (err) {
+        setUploadProgress(100);
+        setProcessingStep(`${prefix}"${file.name}" indexed successfully.`);
+      } catch (err: any) {
+        console.error(`Error uploading ${file.name}:`, err);
+      }
+    }
+
+    setTimeout(() => {
       setIsUploading(false);
       setUploadProgress(0);
-    }
+      setProcessingStep('');
+    }, 1000);
   };
 
   const workspaceDocs = documents.filter((d) => d.workspaceId === activeWorkspace?.id);
@@ -100,6 +101,46 @@ export const DocumentIngestionSection: React.FC = () => {
             ))}
           </select>
         </div>
+      </div>
+
+      {/* Access Clearance Scope Checkbox (Admin Control) */}
+      <div className="flex items-start sm:items-center justify-between gap-3 p-3.5 rounded-xl bg-surface-muted/60 border border-surface-border">
+        <div className="flex items-center gap-3">
+          <input
+            id="employee-accessible-cb"
+            type="checkbox"
+            checked={isEmployeeAccessible}
+            onChange={(e) => setIsEmployeeAccessible(e.target.checked)}
+            className="h-4 w-4 rounded border-surface-border text-primary focus:ring-primary focus:ring-offset-0 cursor-pointer accent-primary shrink-0"
+          />
+          <label htmlFor="employee-accessible-cb" className="text-xs text-enterprise-text cursor-pointer select-none space-y-0.5">
+            <div className="flex items-center gap-1.5 font-semibold">
+              {isEmployeeAccessible ? (
+                <>
+                  <Users className="h-3.5 w-3.5 text-primary" />
+                  <span>Make accessible to employees</span>
+                </>
+              ) : (
+                <>
+                  <Lock className="h-3.5 w-3.5 text-amber-500" />
+                  <span className="text-amber-500 font-bold">Admin Only / Confidential Document</span>
+                </>
+              )}
+            </div>
+            <p className="text-[11px] text-enterprise-muted">
+              {isEmployeeAccessible
+                ? 'Standard employees can query, retrieve, and cite facts from this document.'
+                : 'Restricted: Standard employee queries cannot access or view citations from this document.'}
+            </p>
+          </label>
+        </div>
+        <span className={`text-[10px] font-mono px-2 py-0.5 rounded font-bold uppercase tracking-wider shrink-0 ${
+          isEmployeeAccessible 
+            ? 'bg-blue-500/15 text-blue-700 dark:text-blue-300 border border-blue-500/30' 
+            : 'bg-amber-500/20 text-amber-700 dark:text-amber-300 border border-amber-500/40'
+        }`}>
+          {isEmployeeAccessible ? 'Public Clearance' : 'Admin Confidential'}
+        </span>
       </div>
 
       {/* Upload Dropzone */}
@@ -146,6 +187,15 @@ export const DocumentIngestionSection: React.FC = () => {
                   <span className="text-[10px] uppercase font-mono px-1.5 py-0.5 rounded bg-surface-muted text-enterprise-text font-bold border border-surface-border/50">
                     {doc.format}
                   </span>
+                  {doc.accessScope === 'confidential' ? (
+                    <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-600 dark:text-amber-400 font-bold border border-amber-500/30 flex items-center gap-1">
+                      <Lock className="h-2.5 w-2.5" /> Admin Only
+                    </span>
+                  ) : (
+                    <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-600 dark:text-blue-400 font-medium border border-blue-500/20 flex items-center gap-1">
+                      <Users className="h-2.5 w-2.5" /> Employee
+                    </span>
+                  )}
                   {isJustAdded && (
                     <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 font-bold border border-emerald-500/30">
                       Just Ingested

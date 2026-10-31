@@ -32,6 +32,9 @@ htmlcov/
 # Database & local data
 *.sqlite3
 *.db
+*.db-shm
+*.db-wal
+backend/data/
 pgdata/
 data/mock_docs/
 person1/

@@ -16,9 +16,9 @@ export const MessageComposer: React.FC<MessageComposerProps> = ({
   onStopStreaming,
   activeDocCount,
   suggestedQuestions = [
-    'What was our total net revenue in Q3 2024?',
-    'What is our total cash and liquidity runway?',
-    'Summarize the disaster recovery failover steps',
+    'Summarize the core topics in the uploaded files',
+    'What are the key findings and conclusions?',
+    'Extract the critical requirements and specifications',
   ],
 }) => {
   const [input, setInput] = useState('');

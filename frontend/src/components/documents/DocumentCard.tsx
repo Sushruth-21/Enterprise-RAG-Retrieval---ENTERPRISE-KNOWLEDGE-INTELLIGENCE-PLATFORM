@@ -8,7 +8,11 @@ import {
   Trash2,
   ExternalLink,
   ChevronDown,
+  Lock,
+  Users,
 } from 'lucide-react';
+import { workspaceService } from '@/services/api';
+import { useWorkspaceStore } from '@/stores/useWorkspaceStore';
 import { DocumentItem, DocumentFormat } from '@/types';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -83,6 +87,15 @@ export const DocumentCard: React.FC<DocumentCardProps> = ({
                 <span className="text-xs uppercase font-mono px-2 py-0.5 rounded bg-surface-muted text-enterprise-text font-medium">
                   {document.format}
                 </span>
+                {document.accessScope === 'confidential' ? (
+                  <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-600 dark:text-amber-400 font-bold border border-amber-500/30 flex items-center gap-1">
+                    <Lock className="h-2.5 w-2.5" /> Admin Only
+                  </span>
+                ) : (
+                  <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 font-bold border border-emerald-500/30 flex items-center gap-1">
+                    <Users className="h-2.5 w-2.5" /> Employee Accessible
+                  </span>
+                )}
               </div>
 
               <div className="flex items-center gap-2 text-xs text-enterprise-muted mt-1 font-mono">
@@ -117,7 +130,41 @@ export const DocumentCard: React.FC<DocumentCardProps> = ({
       <div className="mt-3 pt-2.5 border-t border-surface-border flex items-center justify-between text-xs text-enterprise-muted">
         <span className="text-[11px] font-mono">{formatDate(document.uploadedAt)}</span>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2.5">
+          {isAdministrator && (
+            <label
+              onClick={(e) => e.stopPropagation()}
+              className="flex items-center gap-1.5 cursor-pointer text-xs select-none hover:opacity-90 px-2 py-0.5 rounded-lg bg-surface-muted/90 border border-surface-border transition-colors"
+              title={document.accessScope === 'confidential' ? 'Admin Only: Unchecked. Click to allow employee queries.' : 'Employee Accessible: Checked. Click to restrict to Admin Only.'}
+            >
+              <input
+                type="checkbox"
+                checked={document.accessScope !== 'confidential'}
+                onChange={async (e) => {
+                  const newScope = e.target.checked ? 'public' : 'confidential';
+                  try {
+                    await workspaceService.updateDocumentScope(document.id, newScope);
+                    useWorkspaceStore.getState().updateDocumentScope(document.id, newScope);
+                  } catch (err) {
+                    console.error('Failed to update scope:', err);
+                  }
+                }}
+                className="h-3.5 w-3.5 rounded border-surface-border text-primary focus:ring-primary accent-primary cursor-pointer"
+              />
+              <span className="text-[11px] font-medium text-enterprise-text flex items-center gap-1">
+                {document.accessScope === 'confidential' ? (
+                  <span className="text-amber-600 dark:text-amber-400 font-semibold flex items-center gap-1">
+                    <Lock className="h-2.5 w-2.5" /> Admin Only
+                  </span>
+                ) : (
+                  <span className="text-emerald-600 dark:text-emerald-400 font-semibold flex items-center gap-1">
+                    <Users className="h-2.5 w-2.5" /> Accessible to Employees
+                  </span>
+                )}
+              </span>
+            </label>
+          )}
+
           <Link to={`/document/${document.id}`}>
             <Button size="sm" variant="ghost" className="h-6 text-xs gap-1 text-primary hover:text-primary-hover font-semibold">
               <span>Canvas</span>

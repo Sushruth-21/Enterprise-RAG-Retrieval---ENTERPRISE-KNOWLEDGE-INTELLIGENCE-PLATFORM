@@ -7,7 +7,10 @@ from typing import Dict, List, Optional
 import uuid
 import warnings
 
-import bcrypt
+try:
+    import bcrypt
+except ImportError:
+    bcrypt = None
 from fastapi import HTTPException, Security, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 import jwt

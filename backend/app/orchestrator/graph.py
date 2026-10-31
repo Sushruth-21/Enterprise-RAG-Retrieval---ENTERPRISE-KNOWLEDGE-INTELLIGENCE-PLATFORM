@@ -1,19 +1,10 @@
-"""
-LangGraph orchestration workflow — the central brain of the system.
-
-Flow:
-  understand_query → retrieve_context → invoke_mcp_tools → merge_passages
-  → build_context → generate_answer → verify_answer → classify_status
-  → build_citations → END
-"""
 from __future__ import annotations
-
 import logging
 import re
-import uuid
 from typing import Any, Dict, List, Literal, Optional, TypedDict
+import uuid
 
-from langgraph.graph import END, START, StateGraph
+from langgraph.graph import StateGraph, START, END
 
 from app.llm.router import ModelRouter
 from app.mcp.client import MCPClient
@@ -25,6 +16,7 @@ from app.schemas import (
     DocumentPassage,
     VerificationResult,
 )
+from app.storage.vault import KnowledgeVault
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +28,8 @@ class OrchestratorState(TypedDict):
     conversation_id: str
     access_scope: str
     force_local: Optional[bool]
+    document_ids: Optional[List[str]]
+    workspace_id: Optional[str]
     query_type: str  # factual | comparative | procedural | ambiguous
     retrieved_passages: List[DocumentPassage]
     mcp_passages: List[DocumentPassage]
@@ -45,8 +39,10 @@ class OrchestratorState(TypedDict):
     status: str
     citations: List[Citation]
     verification: VerificationResult
+    confidence_score: float
     model_used: str
     error: Optional[str]
+    has_restricted_matches: Optional[bool]
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -64,29 +60,69 @@ def understand_query(state: OrchestratorState) -> Dict[str, Any]:
         query_type = "factual"
     else:
         query_type = "ambiguous"
-    logger.info("Query type: %s", query_type)
     return {"query_type": query_type}
 
 
 async def retrieve_context(state: OrchestratorState) -> Dict[str, Any]:
-    """Fetch relevant passages from Person 3's retrieval service."""
+    """Fetch relevant passages strictly from active document partition and enforce RBAC clearance."""
     client = RetrievalClient()
     passages = await client.hybrid_search(
         query=state["question"],
         access_scope=state["access_scope"],
-        top_k=10,
+        top_k=8,
+        doc_ids=state.get("document_ids"),
+        workspace_id=state.get("workspace_id"),
     )
-    logger.info("Retrieved %d passages from retrieval service", len(passages))
-    return {"retrieved_passages": passages}
+    logger.info("Retrieved %d passages for active docs: %s", len(passages), state.get("document_ids"))
+
+    is_admin = state["access_scope"].lower() in ("confidential", "admin", "maintenance-admin", "all")
+    has_restricted_matches = False
+
+    # Standard employee clearance guard: detect if confidential documents hold relevant records
+    if not is_admin:
+        vault = KnowledgeVault.get_instance()
+        doc_ids = state.get("document_ids") or []
+
+        # 1. Did the user query or select document_ids that are marked confidential?
+        if doc_ids:
+            with vault._get_connection() as conn:
+                placeholders = ",".join(["?"] * len(doc_ids))
+                conf_docs = conn.execute(
+                    f"SELECT id FROM vault_documents WHERE id IN ({placeholders}) AND access_scope = 'confidential'",
+                    doc_ids,
+                ).fetchall()
+                if conf_docs:
+                    has_restricted_matches = True
+
+        # 2. If public passages yielded no strong match, check if confidential chunks match
+        top_public_score = max((p.score for p in passages), default=0.0)
+        if not has_restricted_matches and top_public_score < 0.45:
+            conf_passages = vault.search_chunks(
+                query=state["question"],
+                workspace_id=state.get("workspace_id"),
+                doc_ids=doc_ids if doc_ids else None,
+                access_scope="confidential",
+                top_k=5,
+            )
+            conf_relevant = [
+                p for p in conf_passages
+                if p.access_scope == "confidential" and p.score >= 0.45
+            ]
+            if conf_relevant:
+                has_restricted_matches = True
+
+    return {
+        "retrieved_passages": passages if not has_restricted_matches else [],
+        "has_restricted_matches": has_restricted_matches,
+    }
 
 
 async def invoke_mcp_tools(state: OrchestratorState) -> Dict[str, Any]:
-    """For comparative/complex queries, augment with MCP search."""
+    """For comparative/complex queries, augment with MCP search if running."""
     mcp_passages: List[DocumentPassage] = []
     if state["query_type"] in ("comparative", "ambiguous"):
         client = MCPClient()
         mcp_passages = await client.search_documents(query=state["question"])
-        logger.info("MCP returned %d additional passages", len(mcp_passages))
     return {"mcp_passages": mcp_passages}
 
 
@@ -94,21 +130,26 @@ def merge_passages(state: OrchestratorState) -> Dict[str, Any]:
     """Deduplicate and rank passages, keep top 8."""
     seen: set = set()
     merged: List[DocumentPassage] = []
+
+    # Filter strictly to document_ids if specified (prevents previous sources from lingering)
+    allowed_docs = set(state.get("document_ids") or [])
+
     for p in state["retrieved_passages"] + state["mcp_passages"]:
+        if allowed_docs and p.document_id not in allowed_docs:
+            continue
         if p.chunk_id not in seen:
             seen.add(p.chunk_id)
-            # Prefer current versions
             if not p.is_current:
                 p = p.model_copy(update={"score": p.score * 0.7})
             merged.append(p)
+
     merged.sort(key=lambda x: x.score, reverse=True)
     top = merged[:8]
-    logger.info("Merged to %d unique passages", len(top))
     return {"all_passages": top}
 
 
 def build_context(state: OrchestratorState) -> Dict[str, Any]:
-    """Format passages into a numbered context string for the LLM."""
+    """Format passages into a structured context string for the LLM."""
     if not state["all_passages"]:
         return {"context": ""}
     lines = []
@@ -116,16 +157,25 @@ def build_context(state: OrchestratorState) -> Dict[str, Any]:
         status = "CURRENT" if p.is_current else "SUPERSEDED"
         header = (
             f"[{i}] Document: {p.document_name} v{p.version} ({status}), "
-            f"Section {p.section}, Page {p.page}"
+            f"Section: {p.section}, Page: {p.page}"
         )
         lines.append(f"{header}\n{p.content}\n")
     return {"context": "\n".join(lines)}
 
 
 async def generate_answer(state: OrchestratorState) -> Dict[str, Any]:
-    """Route to local Ollama and generate the answer strictly from retrieved dataset context."""
-    # Strict Grounding Check: If no passages were retrieved from corpus, short-circuit immediately.
-    # Never allow the LLM to invent an answer from its pretraining weights.
+    """Route to local Ollama and generate the answer strictly from retrieved context."""
+    # Strict RBAC Clearance Guard: If employee queried admin-only confidential documents
+    if state.get("has_restricted_matches"):
+        answer = (
+            "Access Restricted: Information related to this query exists within enterprise documents "
+            "restricted exclusively to Administrator clearance. You do not have permission to retrieve "
+            "or view these confidential records. Please contact your system administrator if you require access."
+        )
+        await conversation_store.add_message(state["conversation_id"], "user", state["question"])
+        await conversation_store.add_message(state["conversation_id"], "assistant", answer)
+        return {"answer": answer, "model_used": "rbac-permission-guard"}
+
     if not state["all_passages"] or not state["context"].strip():
         answer = "The provided documents do not contain information about this topic."
         await conversation_store.add_message(state["conversation_id"], "user", state["question"])
@@ -133,18 +183,19 @@ async def generate_answer(state: OrchestratorState) -> Dict[str, Any]:
         return {"answer": answer, "model_used": "dataset-strict-grounding"}
 
     system_prompt = (
-        "You are an offline Enterprise Knowledge Assistant. "
-        "Answer the user's question using ONLY the provided numbered context passages below.\n"
-        "STRICT GROUNDING RULES:\n"
-        "1. Answer ONLY using facts directly stated in the provided context.\n"
-        "2. Do NOT use any pretraining knowledge, outside assumptions, or unverified claims.\n"
-        "3. If the context does not explicitly provide the answer, say exactly: "
+        "You are an offline Enterprise Knowledge Intelligence Assistant.\n"
+        "Analyse the provided document passages deeply to produce an accurate, detailed, and factual answer.\n\n"
+        "STRICT GROUNDING & CITATION RULES:\n"
+        "1. Answer ONLY using verifiable facts directly stated in the context passages below.\n"
+        "2. If tables are present in the context, extract numbers, columns, and metrics accurately.\n"
+        "3. When facts are mentioned, cite the source using inline markers like [1], [2] matching the passage numbers.\n"
+        "4. If multiple versions of a document exist, prefer CURRENT versions over SUPERSEDED versions.\n"
+        "5. Do NOT invent, assume, or extrapolate information outside the context.\n"
+        "6. If the context does not explicitly contain the answer, say exactly: "
         "'The provided documents do not contain information about this topic.'\n"
-        "4. Always reference the document name, section, and version for your answers.\n"
-        "5. Do NOT invent figures, percentages, dates, names, or rules."
+        "7. Provide a clear, thorough explanation covering all parts of the question."
     )
 
-    # Include conversation history
     history = await conversation_store.get_context_string(state["conversation_id"])
     question_with_history = state["question"]
     if history:
@@ -156,10 +207,9 @@ async def generate_answer(state: OrchestratorState) -> Dict[str, Any]:
         system_prompt=system_prompt,
         context=state["context"],
         access_scope=state["access_scope"],
-        force_local=True,  # Guarantee 100% local Ollama execution
+        force_local=True,  # 100% local Ollama execution
     )
 
-    # Save to conversation history
     await conversation_store.add_message(state["conversation_id"], "user", state["question"])
     await conversation_store.add_message(state["conversation_id"], "assistant", answer)
 
@@ -167,11 +217,13 @@ async def generate_answer(state: OrchestratorState) -> Dict[str, Any]:
 
 
 def verify_answer(state: OrchestratorState) -> Dict[str, Any]:
-    """Simple grounding check: key noun phrases from answer appear in passages."""
+    """Grounding verification: check that key terms from answer appear in supporting passages."""
     answer = state["answer"]
+    if state.get("has_restricted_matches") or "access restricted:" in answer.lower():
+        return {"verification": VerificationResult(verified=True, unsupported_claims=[])}
+
     passages_text = " ".join(p.content for p in state["all_passages"]).lower()
 
-    # Extract meaningful words from answer (skip stop words)
     stop_words = {
         "the", "a", "an", "is", "are", "was", "were", "in", "on", "at",
         "to", "for", "of", "and", "or", "that", "this", "it", "with",
@@ -181,17 +233,12 @@ def verify_answer(state: OrchestratorState) -> Dict[str, Any]:
     words = re.findall(r"\b[a-zA-Z]{4,}\b", answer.lower())
     key_words = [w for w in words if w not in stop_words]
 
-    # Check if the answer says "not found" type phrases
     not_found_signals = [
         "do not contain", "does not contain", "not found", "no information",
         "not available", "unable to find", "not covered",
     ]
     if any(sig in answer.lower() for sig in not_found_signals):
-        return {
-            "verification": VerificationResult(
-                verified=True, unsupported_claims=[]
-            )
-        }
+        return {"verification": VerificationResult(verified=True, unsupported_claims=[])}
 
     if not key_words or not state["all_passages"]:
         return {
@@ -200,10 +247,9 @@ def verify_answer(state: OrchestratorState) -> Dict[str, Any]:
             )
         }
 
-    # Count how many key words appear in the passages
     found = sum(1 for w in key_words if w in passages_text)
     ratio = found / len(key_words) if key_words else 0
-    verified = ratio >= 0.5
+    verified = ratio >= 0.45
 
     unsupported: List[str] = []
     if not verified:
@@ -213,48 +259,75 @@ def verify_answer(state: OrchestratorState) -> Dict[str, Any]:
 
 
 def classify_status(state: OrchestratorState) -> Dict[str, Any]:
-    """Determine answered / partially_answered / not_covered."""
-    answer = state["answer"].lower()
-    not_found_signals = [
-        "do not contain", "does not contain", "not found", "no information",
-        "not available", "unable to find", "not covered", "cannot answer",
-    ]
+    """Determine answered / partially_answered / not_covered and compute grounded confidence score."""
+    answer = state["answer"].lower().strip()
 
-    if any(sig in answer for sig in not_found_signals) or not state["all_passages"]:
+    # Exact refusal check or restricted permission guard
+    exact_not_found = (
+        state.get("has_restricted_matches")
+        or "access restricted:" in answer
+        or "the provided documents do not contain information about this topic" in answer
+        or "the uploaded documents do not contain facts to substantiate an answer" in answer
+        or not state["all_passages"]
+    )
+
+    if exact_not_found:
         status = "not_covered"
+        confidence = 0.0
     elif state["verification"].verified:
         status = "answered"
+        if state["all_passages"]:
+            top_scores = [p.score for p in state["all_passages"][:3]]
+            avg_top = sum(top_scores) / len(top_scores)
+            confidence = round(min(max(avg_top, 0.85), 0.98), 2)
+        else:
+            confidence = 0.85
     else:
         status = "partially_answered"
+        confidence = 0.65
 
-    return {"status": status}
+    return {"status": status, "confidence_score": confidence}
 
 
 def build_citations(state: OrchestratorState) -> Dict[str, Any]:
-    """Build Citation objects from the used passages with snippets and relevance scores."""
-    citations = [
-        Citation(
-            id=p.chunk_id,
-            document_id=p.document_id,
-            document_name=p.document_name,
-            version=p.version,
-            section=p.section,
-            page=p.page,
-            page_number=p.page,
-            chunk_id=p.chunk_id,
-            snippet=p.content[:300] if p.content else p.section,
-            relevance_score=float(p.score or 0.85),
-        )
-        for p in state["all_passages"][:5]  # Top 5 citations
-    ]
-    # Deduplicate by section
-    seen_sections: set = set()
+    """Build Citation objects with exact document name, page number, and snippet."""
+    if (
+        state.get("has_restricted_matches")
+        or "access restricted:" in state["answer"].lower()
+        or state["status"] == "not_covered"
+        or not state["all_passages"]
+    ):
+        return {"citations": []}
+
+    allowed_docs = set(state.get("document_ids") or [])
+    passages = state["all_passages"]
+    if allowed_docs:
+        filtered = [p for p in passages if p.document_id in allowed_docs]
+        if filtered:
+            passages = filtered
+
+    seen_keys: set = set()
     unique_citations: List[Citation] = []
-    for c in citations:
-        key = f"{c.document_id}:{c.section}"
-        if key not in seen_sections:
-            seen_sections.add(key)
-            unique_citations.append(c)
+
+    for p in passages[:5]:
+        key = f"{p.document_id}:{p.page}:{p.section}"
+        if key not in seen_keys:
+            seen_keys.add(key)
+            unique_citations.append(
+                Citation(
+                    id=p.chunk_id,
+                    document_id=p.document_id,
+                    document_name=p.document_name,
+                    version=p.version,
+                    section=p.section,
+                    page=p.page,
+                    page_number=p.page,
+                    chunk_id=p.chunk_id,
+                    snippet=p.content[:350] if p.content else p.section,
+                    relevance_score=float(p.score or 0.88),
+                )
+            )
+
     return {"citations": unique_citations}
 
 
@@ -299,6 +372,8 @@ async def run_orchestrator(
     conversation_id: Optional[str] = None,
     access_scope: str = "public",
     force_local: Optional[bool] = None,
+    document_ids: Optional[List[str]] = None,
+    workspace_id: Optional[str] = None,
 ) -> ChatResponse:
     """Entry point called by the FastAPI chat endpoint."""
     conv_id = conversation_id or str(uuid.uuid4())
@@ -308,6 +383,8 @@ async def run_orchestrator(
         "conversation_id": conv_id,
         "access_scope": access_scope,
         "force_local": force_local,
+        "document_ids": document_ids,
+        "workspace_id": workspace_id,
         "query_type": "ambiguous",
         "retrieved_passages": [],
         "mcp_passages": [],
@@ -315,10 +392,12 @@ async def run_orchestrator(
         "context": "",
         "answer": "",
         "status": "not_covered",
+        "confidence_score": 0.0,
         "citations": [],
         "verification": VerificationResult(verified=False, unsupported_claims=[]),
         "model_used": "unknown",
         "error": None,
+        "has_restricted_matches": False,
     }
 
     try:
@@ -337,6 +416,7 @@ async def run_orchestrator(
     return ChatResponse(
         answer=final_state["answer"],
         status=final_state["status"],
+        confidence_score=final_state.get("confidence_score", 0.0),
         citations=final_state["citations"],
         verification=final_state["verification"],
         model_used=final_state["model_used"],

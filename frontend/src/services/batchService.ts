@@ -2,8 +2,6 @@ import { apiClient } from './api';
 import { ApiBatchQueryResponse, ApiBatchQueryItemResult } from '@/types/apiContracts';
 import { DocumentItem } from '@/types';
 
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-
 export const batchService = {
   async executeBatchQueries(
     workspaceId: string,
@@ -14,139 +12,56 @@ export const batchService = {
     try {
       // POST /api/batch
       const res = await apiClient.post<ApiBatchQueryResponse>('/api/batch', {
-        workspace_id: workspaceId,
+        workspace_id: workspaceId || 'default',
         questions,
         document_ids: activeDocs.map((d) => d.id),
       });
       return res.data;
     } catch {
-      // Offline / Simulated execution when backend is offline
+      // Process queries sequentially through /api/chat
       const results: ApiBatchQueryItemResult[] = [];
 
       for (let i = 0; i < questions.length; i++) {
         const q = questions[i].trim();
         if (!q) continue;
 
-        await sleep(300);
+        try {
+          const chatRes = await apiClient.post('/api/chat', {
+            question: q,
+            message: q,
+            query: q,
+            workspace_id: workspaceId || 'default',
+            document_ids: activeDocs.map((d) => d.id),
+          });
 
-        const lower = q.toLowerCase();
-        let result: ApiBatchQueryItemResult;
-
-        if (
-          lower.includes('weather') ||
-          lower.includes('quantum') ||
-          lower.includes('stock price') ||
-          lower.includes('movie') ||
-          lower.includes('cafeteria') ||
-          activeDocs.length === 0
-        ) {
-          result = {
+          const itemResult: ApiBatchQueryItemResult = {
             id: `batch-item-${Date.now()}-${i}`,
             question: q,
-            status: 'insufficient_evidence',
+            status: chatRes.data.status === 'not_covered' ? 'insufficient_evidence' : 'completed',
+            coverage: chatRes.data.coverage || (chatRes.data.citations?.length > 0 ? 'full' : 'insufficient_evidence'),
+            answer: chatRes.data.answer || chatRes.data.response || 'No response generated.',
+            citations: chatRes.data.citations || [],
+            latency_ms: chatRes.data.latency_ms || 250,
+          };
+
+          results.push(itemResult);
+          if (onProgress) {
+            onProgress(i + 1, questions.length, itemResult);
+          }
+        } catch (err: any) {
+          const errorResult: ApiBatchQueryItemResult = {
+            id: `batch-item-${Date.now()}-${i}`,
+            question: q,
+            status: 'failed',
             coverage: 'insufficient_evidence',
-            answer:
-              'No factual evidence exists within the uploaded workspace documents to answer this question. The model strictly abstained from ungrounded assumption.',
+            answer: `Failed to evaluate query against backend: ${err.message || 'connection error'}`,
             citations: [],
-            latency_ms: 180,
+            latency_ms: 100,
           };
-        } else if (lower.includes('revenue') || lower.includes('q3') || lower.includes('10q')) {
-          result = {
-            id: `batch-item-${Date.now()}-${i}`,
-            question: q,
-            status: 'completed',
-            coverage: 'full',
-            answer:
-              'Consolidated net revenue for Q3 2024 was $842.6 million, an 18.4% YoY increase compared to $711.5 million in the prior period. Growth was driven by enterprise platform adoption [1].',
-            citations: [
-              {
-                id: `cit-batch-${i}-1`,
-                document_id: activeDocs[0]?.id || 'doc-1',
-                document_name: activeDocs[0]?.name || 'Q3_2024_Form_10Q_Consolidated.pdf',
-                page_number: 14,
-                chunk_id: 'chk-142',
-                snippet:
-                  'Consolidated net revenue for the three months ended September 30, 2024 was $842.6 million, representing an 18.4% increase...',
-                relevance_score: 0.98,
-                vector_distance: 0.08,
-              },
-            ],
-            latency_ms: 360,
-          };
-        } else if (lower.includes('runway') || lower.includes('cash') || lower.includes('treasury')) {
-          result = {
-            id: `batch-item-${Date.now()}-${i}`,
-            question: q,
-            status: 'completed',
-            coverage: 'full',
-            answer:
-              'Total cash and liquid investments stood at $1.42 billion as of October 1, 2024, providing 18.5 months of operational runway under standard burn assumptions [1].',
-            citations: [
-              {
-                id: `cit-batch-${i}-2`,
-                document_id: activeDocs[1]?.id || activeDocs[0]?.id || 'doc-2',
-                document_name: activeDocs[1]?.name || 'Treasury_Liquidity_Report_Oct.pdf',
-                page_number: 6,
-                chunk_id: 'chk-058',
-                snippet:
-                  'Total cash, cash equivalents, and short-term liquid investments stood at $1.42 billion as of October 1, 2024...',
-                relevance_score: 0.95,
-                vector_distance: 0.12,
-              },
-            ],
-            latency_ms: 320,
-          };
-        } else if (lower.includes('gdpr') || lower.includes('compliance') || lower.includes('retention')) {
-          result = {
-            id: `batch-item-${Date.now()}-${i}`,
-            question: q,
-            status: 'completed',
-            coverage: 'full',
-            answer:
-              'Record of processing activities is maintained under GDPR Article 30. Automated data retention pruning schedules and sub-processor agreements are audited quarterly [1].',
-            citations: [
-              {
-                id: `cit-batch-${i}-3`,
-                document_id: 'doc-7',
-                document_name: 'EU_GDPR_Article_30_Register.pdf',
-                page_number: 12,
-                chunk_id: 'chk-110',
-                snippet:
-                  'Record of processing activities covering customer analytics, employee data, and sub-processor agreements...',
-                relevance_score: 0.93,
-                vector_distance: 0.14,
-              },
-            ],
-            latency_ms: 330,
-          };
-        } else {
-          result = {
-            id: `batch-item-${Date.now()}-${i}`,
-            question: q,
-            status: 'completed',
-            coverage: 'partial',
-            answer:
-              'Partial operational details were identified in the document index [1], but specific numeric figures or policy caveats are not fully elaborated in the current version.',
-            citations: [
-              {
-                id: `cit-batch-${i}-4`,
-                document_id: activeDocs[0]?.id || 'doc-1',
-                document_name: activeDocs[0]?.name || 'Document_Overview.pdf',
-                page_number: 2,
-                chunk_id: 'chk-012',
-                snippet:
-                  'Operational parameters and procedures are outlined under standard enterprise guidelines.',
-                relevance_score: 0.78,
-                vector_distance: 0.29,
-              },
-            ],
-            latency_ms: 390,
-          };
-        }
-
-        results.push(result);
-        if (onProgress) {
-          onProgress(i + 1, questions.length, result);
+          results.push(errorResult);
+          if (onProgress) {
+            onProgress(i + 1, questions.length, errorResult);
+          }
         }
       }
 
@@ -159,8 +74,8 @@ export const batchService = {
 
       return {
         batch_id: `batch-exec-${Date.now()}`,
-        workspace_id: workspaceId,
-        total_questions: results.length,
+        workspace_id: workspaceId || 'default',
+        total_questions: questions.length,
         completed_count: results.length,
         results,
         summary: {

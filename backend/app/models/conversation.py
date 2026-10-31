@@ -29,8 +29,9 @@ class ConversationStore:
     MAX_MESSAGES = 50
 
     def __init__(self) -> None:
+        import threading
         self._store: Dict[str, List[ConversationMessage]] = {}
-        self._lock = asyncio.Lock()
+        self._thread_lock = threading.Lock()
 
     async def add_message(
         self,
@@ -51,7 +52,7 @@ class ConversationStore:
             execution_time_ms=execution_time_ms,
             citations=citations or [],
         )
-        async with self._lock:
+        with self._thread_lock:
             if conversation_id not in self._store:
                 self._store[conversation_id] = []
             self._store[conversation_id].append(msg)
@@ -60,11 +61,11 @@ class ConversationStore:
         return msg
 
     async def get_history(self, conversation_id: str) -> List[ConversationMessage]:
-        async with self._lock:
+        with self._thread_lock:
             return list(self._store.get(conversation_id, []))
 
     async def clear(self, conversation_id: str) -> None:
-        async with self._lock:
+        with self._thread_lock:
             self._store.pop(conversation_id, None)
 
     async def get_context_string(self, conversation_id: str, max_turns: int = 6) -> str:

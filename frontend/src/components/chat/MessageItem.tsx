@@ -5,6 +5,7 @@ import {
   Check,
   ShieldCheck,
   AlertTriangle,
+  Lock,
   HelpCircle,
   FileText,
 } from 'lucide-react';
@@ -32,6 +33,14 @@ export const MessageItem: React.FC<MessageItemProps> = ({
   };
 
   const getCoverageIndicator = (coverage?: AnswerCoverage) => {
+    if (message.content.includes("Access Restricted:")) {
+      return (
+        <span className="inline-flex items-center gap-1.5 text-xs font-mono text-amber-600 font-semibold">
+          <span className="h-2 w-2 rounded-full bg-amber-500" />
+          Access Restricted
+        </span>
+      );
+    }
     switch (coverage) {
       case 'full':
         return (
@@ -75,11 +84,13 @@ export const MessageItem: React.FC<MessageItemProps> = ({
             const citation = citations[citIndex];
             if (citation) {
               const isActive = activeCitationId === citation.id;
+              const docName = citation.documentName || (citation as any).document_name || 'Document';
+              const pageNum = citation.pageNumber ?? (citation as any).page_number ?? (citation as any).page ?? 1;
               return (
                 <button
                   key={index}
                   onClick={() => onSelectCitation(citation)}
-                  title={`${citation.documentName} (Page ${citation.pageNumber})`}
+                  title={`${docName} (Page ${pageNum})`}
                   className={`inline-flex items-center px-2 py-0.5 mx-1 rounded-md text-xs font-mono font-semibold transition-all ${
                     isActive
                       ? 'bg-primary text-white shadow-sm'
@@ -120,6 +131,25 @@ export const MessageItem: React.FC<MessageItemProps> = ({
                 {getCoverageIndicator(message.coverage)}
               </>
             )}
+            {message.confidenceScore !== undefined && (
+              <>
+                <span>•</span>
+                <span className="inline-flex items-center gap-1 text-xs font-mono font-semibold">
+                  <span className="text-enterprise-dim">Confidence:</span>
+                  <span
+                    className={`px-1.5 py-0.2 rounded font-bold ${
+                      message.confidenceScore >= 0.7
+                        ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400'
+                        : message.confidenceScore >= 0.35
+                        ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400'
+                        : 'bg-rose-500/15 text-rose-600 dark:text-rose-400'
+                    }`}
+                  >
+                    {(message.confidenceScore * 100).toFixed(0)}%
+                  </span>
+                </span>
+              </>
+            )}
             {message.executionTimeMs && (
               <>
                 <span>•</span>
@@ -140,12 +170,35 @@ export const MessageItem: React.FC<MessageItemProps> = ({
             : 'bg-surface-elevated/80 border border-surface-border text-enterprise-text w-full shadow-subtle'
         }`}
       >
+        {/* Access Restricted Clearance Banner */}
+        {!isUser && message.content.includes('Access Restricted:') && (
+          <div className="mb-4 p-3.5 rounded-xl border border-amber-500/30 bg-amber-50/80 dark:bg-amber-950/40 text-amber-900 dark:text-amber-200 text-sm leading-relaxed space-y-1 shadow-sm">
+            <div className="flex items-center justify-between font-semibold text-amber-700 dark:text-amber-400">
+              <span className="flex items-center gap-2">
+                <Lock className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
+                <span>Confidential Document — Access Restricted</span>
+              </span>
+              <span className="text-xs font-mono font-bold px-2 py-0.5 rounded bg-amber-200/60 dark:bg-amber-900/60 text-amber-800 dark:text-amber-300">
+                Admin Clearance Only
+              </span>
+            </div>
+            <p className="text-xs text-amber-800 dark:text-amber-300">
+              Information related to this query exists within enterprise documents restricted exclusively to Administrator clearance. You do not have permission to retrieve or view these confidential records.
+            </p>
+          </div>
+        )}
+
         {/* Insufficient Evidence Notice */}
-        {!isUser && message.coverage === 'insufficient_evidence' && (
+        {!isUser && message.coverage === 'insufficient_evidence' && !message.content.includes('Access Restricted:') && (
           <div className="mb-4 p-3.5 rounded-xl border border-rose-500/30 bg-rose-50 dark:bg-rose-950/40 text-rose-900 dark:text-rose-200 text-sm leading-relaxed space-y-1">
-            <div className="flex items-center gap-2 font-semibold text-rose-700 dark:text-rose-400">
-              <AlertTriangle className="h-4 w-4 shrink-0" />
-              <span>Insufficient Evidence in Uploaded Files</span>
+            <div className="flex items-center justify-between font-semibold text-rose-700 dark:text-rose-400">
+              <span className="flex items-center gap-2">
+                <AlertTriangle className="h-4 w-4 shrink-0" />
+                <span>Insufficient Evidence in Uploaded Files</span>
+              </span>
+              <span className="text-xs font-mono font-bold px-2 py-0.5 rounded bg-rose-200/60 dark:bg-rose-900/60 text-rose-800 dark:text-rose-300">
+                Confidence: {((message.confidenceScore ?? 0) * 100).toFixed(0)}%
+              </span>
             </div>
             <p className="text-xs text-rose-800 dark:text-rose-300">
               The uploaded documents do not contain facts to substantiate an answer. In accordance with strict enterprise grounding, external assumptions were not made.
@@ -165,9 +218,11 @@ export const MessageItem: React.FC<MessageItemProps> = ({
               </span>
               {message.citations.map((cit, idx) => {
                 const isActive = activeCitationId === cit.id;
+                const docName = cit.documentName || (cit as any).document_name || 'Document';
+                const pageNum = cit.pageNumber ?? (cit as any).page_number ?? (cit as any).page ?? 1;
                 return (
                   <button
-                    key={cit.id}
+                    key={cit.id || idx}
                     onClick={() => onSelectCitation(cit)}
                     className={`text-xs px-3 py-1.5 rounded-xl border transition-all flex items-center gap-2 ${
                       isActive
@@ -179,10 +234,10 @@ export const MessageItem: React.FC<MessageItemProps> = ({
                       [{idx + 1}]
                     </span>
                     <span className="truncate max-w-[170px] font-medium">
-                      {cit.documentName}
+                      {docName}
                     </span>
                     <span className="text-enterprise-dim font-mono">
-                      p.{cit.pageNumber}
+                      p.{pageNum}
                     </span>
                   </button>
                 );

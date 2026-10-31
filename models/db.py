@@ -17,7 +17,16 @@ from sqlalchemy import (
     func,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
-from pgvector.sqlalchemy import Vector
+try:
+    from pgvector.sqlalchemy import Vector
+except ImportError:
+    from sqlalchemy.types import UserDefinedType
+    class Vector(UserDefinedType):
+        def __init__(self, dim=None):
+            self.dim = dim
+        def get_col_spec(self, **kw):
+            return f"vector({self.dim})" if self.dim else "vector"
+
 
 from .enums import DocumentStatus, ProcessingStatus
 

@@ -7,7 +7,8 @@ import { AppSidebar } from './AppSidebar';
 import { AdminAuthModal } from '@/components/auth/AdminAuthModal';
 import { useWorkspaceStore } from '@/stores/useWorkspaceStore';
 import { useUIStore } from '@/stores/useUIStore';
-import { INITIAL_WORKSPACES, INITIAL_DOCUMENTS } from '@/mocks/initialData';
+import { INITIAL_WORKSPACES } from '@/mocks/initialData';
+import { workspaceService } from '@/services/api';
 
 export const AppLayout: React.FC = () => {
   const { workspaces, setWorkspaces, activeWorkspaceId, setActiveWorkspaceId, setDocuments } =
@@ -16,13 +17,22 @@ export const AppLayout: React.FC = () => {
   const isDark = theme === 'dark';
 
   useEffect(() => {
+    // 1. Initialize clean workspace if none exists
     if (workspaces.length === 0) {
       setWorkspaces(INITIAL_WORKSPACES);
-      setDocuments(INITIAL_DOCUMENTS);
       if (!activeWorkspaceId && INITIAL_WORKSPACES.length > 0) {
         setActiveWorkspaceId(INITIAL_WORKSPACES[0].id);
       }
     }
+
+    // 2. Fetch real production documents from Knowledge Vault
+    workspaceService.getDocuments().then((docs) => {
+      if (Array.isArray(docs)) {
+        setDocuments(docs);
+      }
+    }).catch((err) => {
+      console.warn('Initial document load from backend:', err);
+    });
   }, [workspaces.length, setWorkspaces, setDocuments, activeWorkspaceId, setActiveWorkspaceId]);
 
   return (
@@ -59,7 +69,7 @@ export const AppLayout: React.FC = () => {
                   key="sun"
                   initial={{ rotate: 90, scale: 0.5, opacity: 0 }}
                   animate={{ rotate: 0, scale: 1, opacity: 1 }}
-                  exit={{ rotate: -90, scale: 0.5, opacity: 0 }}
+                  exit={{ rotate: 90, scale: 0.5, opacity: 0 }}
                   transition={{ type: 'spring', stiffness: 350, damping: 25 }}
                 >
                   <Sun className="h-4.5 w-4.5 text-amber-500 group-hover:scale-110 transition-transform" />

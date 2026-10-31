@@ -23,6 +23,7 @@ interface WorkspaceState {
   deselectAllDocuments: () => void;
   addDocument: (doc: DocumentItem) => boolean;
   removeDocument: (docId: string) => boolean;
+  updateDocumentScope: (docId: string, scope: 'public' | 'confidential') => void;
 }
 
 export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
@@ -175,5 +176,19 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       })),
     }));
     return true;
+  },
+
+  updateDocumentScope: (docId, scope) => {
+    set((state) => ({
+      documents: state.documents.map((d) =>
+        d.id === docId
+          ? {
+              ...d,
+              accessScope: scope,
+              isEmployeeAccessible: scope === 'public',
+            }
+          : d
+      ),
+    }));
   },
 }));

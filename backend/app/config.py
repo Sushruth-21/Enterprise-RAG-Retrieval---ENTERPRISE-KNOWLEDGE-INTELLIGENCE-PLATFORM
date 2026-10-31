@@ -12,8 +12,15 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    # Database
+    # Database — PostgreSQL with pgvector (RDS Aurora / local) or fallback to SQLite KnowledgeVault
     DATABASE_URL: str = "postgresql+asyncpg://ekp_user:ekp_password@localhost:5432/enterprise_rag"
+
+    # AWS Cloud & Well-Architected Framework
+    AWS_REGION: str = "us-east-1"
+    AWS_DEFAULT_REGION: str = "us-east-1"
+    S3_BUCKET_NAME: str = ""
+    AWS_S3_BUCKET: str = ""
+    AWS_KMS_KEY_ID: str = ""
 
     # Ollama — Local AI
     OLLAMA_BASE_URL: str = "http://localhost:11434"
