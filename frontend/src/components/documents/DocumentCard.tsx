@@ -37,6 +37,15 @@ export const DocumentCard: React.FC<DocumentCardProps> = ({
   const isAdministrator = isAdmin();
   const [isExpanded, setIsExpanded] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [roleAccess, setRoleAccess] = useState<{
+    manager: boolean;
+    analyst: boolean;
+    complaintOfficer: boolean;
+  }>({
+    manager: true,
+    analyst: true,
+    complaintOfficer: true,
+  });
 
   return (
     <motion.div
@@ -130,39 +139,72 @@ export const DocumentCard: React.FC<DocumentCardProps> = ({
       <div className="mt-3 pt-2.5 border-t border-surface-border flex items-center justify-between text-xs text-enterprise-muted">
         <span className="text-[11px] font-mono">{formatDate(document.uploadedAt)}</span>
 
-        <div className="flex items-center gap-2.5">
+        <div className="flex items-center gap-2.5 flex-wrap">
           {isAdministrator && (
-            <label
-              onClick={(e) => e.stopPropagation()}
-              className="flex items-center gap-1.5 cursor-pointer text-xs select-none hover:opacity-90 px-2 py-0.5 rounded-lg bg-surface-muted/90 border border-surface-border transition-colors"
-              title={document.accessScope === 'confidential' ? 'Admin Only: Unchecked. Click to allow employee queries.' : 'Employee Accessible: Checked. Click to restrict to Admin Only.'}
-            >
-              <input
-                type="checkbox"
-                checked={document.accessScope !== 'confidential'}
-                onChange={async (e) => {
-                  const newScope = e.target.checked ? 'public' : 'confidential';
-                  try {
-                    await workspaceService.updateDocumentScope(document.id, newScope);
-                    useWorkspaceStore.getState().updateDocumentScope(document.id, newScope);
-                  } catch (err) {
-                    console.error('Failed to update scope:', err);
-                  }
-                }}
-                className="h-3.5 w-3.5 rounded border-surface-border text-primary focus:ring-primary accent-primary cursor-pointer"
-              />
-              <span className="text-[11px] font-medium text-enterprise-text flex items-center gap-1">
-                {document.accessScope === 'confidential' ? (
-                  <span className="text-amber-600 dark:text-amber-400 font-semibold flex items-center gap-1">
-                    <Lock className="h-2.5 w-2.5" /> Admin Only
-                  </span>
-                ) : (
-                  <span className="text-emerald-600 dark:text-emerald-400 font-semibold flex items-center gap-1">
-                    <Users className="h-2.5 w-2.5" /> Accessible to Employees
-                  </span>
-                )}
-              </span>
-            </label>
+            <div className="flex items-center gap-2 flex-wrap" onClick={(e) => e.stopPropagation()}>
+              <label
+                className="flex items-center gap-1.5 cursor-pointer text-xs select-none hover:opacity-90 px-2 py-0.5 rounded-lg bg-surface-muted/90 border border-surface-border transition-colors"
+                title={document.accessScope === 'confidential' ? 'Admin Only: Unchecked. Click to allow employee queries.' : 'Employee Accessible: Checked. Click to restrict to Admin Only.'}
+              >
+                <input
+                  type="checkbox"
+                  checked={document.accessScope !== 'confidential'}
+                  onChange={async (e) => {
+                    const newScope = e.target.checked ? 'public' : 'confidential';
+                    try {
+                      await workspaceService.updateDocumentScope(document.id, newScope);
+                      useWorkspaceStore.getState().updateDocumentScope(document.id, newScope);
+                    } catch (err) {
+                      console.error('Failed to update scope:', err);
+                    }
+                  }}
+                  className="h-3.5 w-3.5 rounded border-surface-border text-primary focus:ring-primary accent-primary cursor-pointer"
+                />
+                <span className="text-[11px] font-medium text-enterprise-text flex items-center gap-1">
+                  {document.accessScope === 'confidential' ? (
+                    <span className="text-amber-600 dark:text-amber-400 font-semibold flex items-center gap-1">
+                      <Lock className="h-2.5 w-2.5" /> Admin Only
+                    </span>
+                  ) : (
+                    <span className="text-emerald-600 dark:text-emerald-400 font-semibold flex items-center gap-1">
+                      <Users className="h-2.5 w-2.5" /> Accessible to Employees
+                    </span>
+                  )}
+                </span>
+              </label>
+
+              {/* Roles checkboxes beside Accessible to Employees */}
+              <div className="flex items-center gap-2 px-2 py-0.5 rounded-lg bg-surface-muted/80 border border-surface-border text-[11px]">
+                <span className="text-[10px] font-semibold text-enterprise-muted uppercase font-mono">Roles:</span>
+                <label className="flex items-center gap-1 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={roleAccess.manager}
+                    onChange={(e) => setRoleAccess((prev) => ({ ...prev, manager: e.target.checked }))}
+                    className="h-3 w-3 rounded border-surface-border text-primary focus:ring-primary accent-primary cursor-pointer"
+                  />
+                  <span className="text-enterprise-text text-[11px]">Manager</span>
+                </label>
+                <label className="flex items-center gap-1 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={roleAccess.analyst}
+                    onChange={(e) => setRoleAccess((prev) => ({ ...prev, analyst: e.target.checked }))}
+                    className="h-3 w-3 rounded border-surface-border text-primary focus:ring-primary accent-primary cursor-pointer"
+                  />
+                  <span className="text-enterprise-text text-[11px]">Analyst</span>
+                </label>
+                <label className="flex items-center gap-1 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={roleAccess.complaintOfficer}
+                    onChange={(e) => setRoleAccess((prev) => ({ ...prev, complaintOfficer: e.target.checked }))}
+                    className="h-3 w-3 rounded border-surface-border text-primary focus:ring-primary accent-primary cursor-pointer"
+                  />
+                  <span className="text-enterprise-text text-[11px]">Complaint Officer</span>
+                </label>
+              </div>
+            </div>
           )}
 
           <Link to={`/document/${document.id}`}>

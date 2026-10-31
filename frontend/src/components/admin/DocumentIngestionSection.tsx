@@ -26,6 +26,15 @@ export const DocumentIngestionSection: React.FC = () => {
   const [processingStep, setProcessingStep] = useState('');
   const [recentUploads, setRecentUploads] = useState<string[]>([]);
   const [isEmployeeAccessible, setIsEmployeeAccessible] = useState<boolean>(true);
+  const [roleAccess, setRoleAccess] = useState<{
+    manager: boolean;
+    analyst: boolean;
+    complaintOfficer: boolean;
+  }>({
+    manager: true,
+    analyst: true,
+    complaintOfficer: true,
+  });
 
   const activeWorkspace =
     workspaces.find((w) => w.id === activeWorkspaceId) || workspaces[0];
@@ -104,7 +113,7 @@ export const DocumentIngestionSection: React.FC = () => {
       </div>
 
       {/* Access Clearance Scope Checkbox (Admin Control) */}
-      <div className="flex items-start sm:items-center justify-between gap-3 p-3.5 rounded-xl bg-surface-muted/60 border border-surface-border">
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3.5 p-3.5 rounded-xl bg-surface-muted/60 border border-surface-border">
         <div className="flex items-center gap-3">
           <input
             id="employee-accessible-cb"
@@ -134,6 +143,42 @@ export const DocumentIngestionSection: React.FC = () => {
             </p>
           </label>
         </div>
+
+        {/* Role-based accessibility checkboxes */}
+        <div className="flex items-center gap-3 pl-7 lg:pl-0 flex-wrap">
+          <span className="text-[11px] font-semibold text-enterprise-muted uppercase font-mono">Accessible Roles:</span>
+          
+          <label className="flex items-center gap-1.5 cursor-pointer text-xs select-none">
+            <input
+              type="checkbox"
+              checked={roleAccess.manager}
+              onChange={(e) => setRoleAccess((prev) => ({ ...prev, manager: e.target.checked }))}
+              className="h-3.5 w-3.5 rounded border-surface-border text-primary focus:ring-primary accent-primary cursor-pointer"
+            />
+            <span className="text-[11px] font-medium text-enterprise-text">Manager</span>
+          </label>
+
+          <label className="flex items-center gap-1.5 cursor-pointer text-xs select-none">
+            <input
+              type="checkbox"
+              checked={roleAccess.analyst}
+              onChange={(e) => setRoleAccess((prev) => ({ ...prev, analyst: e.target.checked }))}
+              className="h-3.5 w-3.5 rounded border-surface-border text-primary focus:ring-primary accent-primary cursor-pointer"
+            />
+            <span className="text-[11px] font-medium text-enterprise-text">Analyst</span>
+          </label>
+
+          <label className="flex items-center gap-1.5 cursor-pointer text-xs select-none">
+            <input
+              type="checkbox"
+              checked={roleAccess.complaintOfficer}
+              onChange={(e) => setRoleAccess((prev) => ({ ...prev, complaintOfficer: e.target.checked }))}
+              className="h-3.5 w-3.5 rounded border-surface-border text-primary focus:ring-primary accent-primary cursor-pointer"
+            />
+            <span className="text-[11px] font-medium text-enterprise-text">Complaint Officer</span>
+          </label>
+        </div>
+
         <span className={`text-[10px] font-mono px-2 py-0.5 rounded font-bold uppercase tracking-wider shrink-0 ${
           isEmployeeAccessible 
             ? 'bg-blue-500/15 text-blue-700 dark:text-blue-300 border border-blue-500/30' 

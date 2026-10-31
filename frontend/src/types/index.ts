@@ -16,6 +16,7 @@ export interface DocumentItem {
   version: string;
   accessScope?: 'public' | 'confidential';
   isEmployeeAccessible?: boolean;
+  accessibleRoles?: string[];
 }
 
 export interface Workspace {
