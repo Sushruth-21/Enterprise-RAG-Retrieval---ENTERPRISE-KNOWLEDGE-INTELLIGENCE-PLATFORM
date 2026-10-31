@@ -66,7 +66,10 @@ export const WorkspacePage: React.FC = () => {
   }, [formatFilter]);
 
   const activeWorkspace = workspaces.find((w) => w.id === activeWorkspaceId) || workspaces[0];
-  const workspaceDocs = documents.filter((d) => d.workspaceId === activeWorkspace?.id);
+  const currentWorkspaceId = activeWorkspace?.id || 'default';
+  const workspaceDocs = documents.filter(
+    (d) => !d.workspaceId || d.workspaceId === currentWorkspaceId || currentWorkspaceId === 'default'
+  );
 
   if (!activeWorkspace) {
     return (

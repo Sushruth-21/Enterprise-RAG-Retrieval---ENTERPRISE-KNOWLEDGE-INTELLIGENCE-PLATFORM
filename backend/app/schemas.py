@@ -174,14 +174,22 @@ class DocumentUploadResponse(BaseModel):
     sizeBytes: int = 0
     pageCount: int = 1
     chunkCount: int = 0
+    chunksCount: int = 0
     summary: Optional[str] = None
     description: Optional[str] = None
+    uploadedAt: Optional[str] = None
+    uploaded_at: Optional[str] = None
+    status: str = "ready"
+    version: str = "1.0"
+    version_id: Optional[str] = None
+    accessScope: str = "public"
+    access_scope: str = "public"
+    isEmployeeAccessible: bool = True
+    is_employee_accessible: bool = True
     # Person 1 backend fields
     document_id: str
     document_name: str
-    status: str = "indexed"
     message: str = "Document processed successfully"
-    version_id: Optional[str] = None
     status_url: Optional[str] = None
 
 
@@ -194,8 +202,13 @@ class DocumentInfo(BaseModel):
     sizeBytes: int = 0
     pageCount: int = 1
     chunkCount: int = 0
+    chunksCount: int = 0
     summary: Optional[str] = None
     description: Optional[str] = None
+    uploadedAt: Optional[str] = None
+    status: str = "ready"
+    accessScope: str = "public"
+    isEmployeeAccessible: bool = True
     # Person 1 backend fields
     document_id: str = ""
     document_name: str = ""
@@ -204,6 +217,8 @@ class DocumentInfo(BaseModel):
     doc_type: str = "txt"
     page_count: int = 1
     section_count: int = 0
+    access_scope: str = "public"
+    is_employee_accessible: bool = True
     uploaded_at: datetime = Field(default_factory=datetime.utcnow)
 
     @model_validator(mode="after")
@@ -232,6 +247,22 @@ class DocumentInfo(BaseModel):
             self.chunkCount = self.section_count
         elif self.chunkCount and self.section_count == 0:
             self.section_count = self.chunkCount
+
+        self.chunksCount = self.chunkCount
+
+        if self.access_scope and not self.accessScope:
+            self.accessScope = self.access_scope
+        elif self.accessScope and not self.access_scope:
+            self.access_scope = self.accessScope
+
+        self.isEmployeeAccessible = (self.accessScope == "public")
+        self.is_employee_accessible = (self.access_scope == "public")
+
+        if not self.uploadedAt and self.uploaded_at:
+            if isinstance(self.uploaded_at, datetime):
+                self.uploadedAt = self.uploaded_at.isoformat()
+            else:
+                self.uploadedAt = str(self.uploaded_at)
 
         return self
 

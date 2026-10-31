@@ -208,14 +208,12 @@ async def generate_answer(state: OrchestratorState) -> Dict[str, Any]:
         "8. Provide a clear, thorough explanation covering all parts of the question."
     )
 
-    history = await conversation_store.get_context_string(state["conversation_id"])
-    question_with_history = state["question"]
-    if history:
-        question_with_history = f"Previous conversation:\n{history}\n\nCurrent question: {state['question']}"
+    # Clean question strictly isolated to current query intent — eliminates previous query cross-contamination
+    clean_question = state["question"].strip()
 
     router = ModelRouter()
     answer, model_used = await router.generate(
-        question=question_with_history,
+        question=clean_question,
         system_prompt=system_prompt,
         context=state["context"],
         access_scope=state["access_scope"],

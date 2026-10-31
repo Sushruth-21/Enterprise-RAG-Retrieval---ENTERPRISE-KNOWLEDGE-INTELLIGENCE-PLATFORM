@@ -112,6 +112,7 @@ async def upload_document(
     page_count = vault_result["page_count"]
     chunk_count = vault_result["chunk_count"]
 
+    now_iso = datetime.utcnow().isoformat()
     return DocumentUploadResponse(
         id=doc_id,
         workspaceId=effective_org,
@@ -120,6 +121,7 @@ async def upload_document(
         sizeBytes=len(file_bytes),
         pageCount=page_count,
         chunkCount=chunk_count,
+        chunksCount=chunk_count,
         summary=doc_desc,
         description=doc_desc,
         document_id=doc_id,
@@ -128,9 +130,12 @@ async def upload_document(
         accessScope=effective_scope,
         is_employee_accessible=(effective_scope == "public"),
         isEmployeeAccessible=(effective_scope == "public"),
+        uploadedAt=vault_result.get("uploadedAt") or now_iso,
+        uploaded_at=vault_result.get("uploaded_at") or now_iso,
+        version=version_label or "1.0",
+        version_id=version_label or "1.0",
         status="ready",
         message=f"Document '{doc_name}' successfully parsed and indexed into knowledge vault ({page_count} pages, {chunk_count} chunks, scope={effective_scope}).",
-        version_id="1.0",
         status_url=None,
     )
 
@@ -207,7 +212,10 @@ async def list_documents(
                     doc_type=d_format,
                     page_count=int(doc.get("page_count", doc.get("pageCount", 1))),
                     section_count=int(doc.get("chunk_count", doc.get("chunkCount", 0))),
+                    chunksCount=int(doc.get("chunk_count", doc.get("chunkCount", doc.get("section_count", 0)))),
                     uploaded_at=uploaded_dt,
+                    uploadedAt=uploaded_dt.isoformat() if hasattr(uploaded_dt, "isoformat") else str(uploaded_dt),
+                    status="ready",
                 )
             )
         except Exception as e:

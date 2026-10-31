@@ -14,12 +14,18 @@ export function formatBytes(bytes: number, decimals = 1): string {
   return `${parseFloat((bytes / Math.pow(k, i)).toFixed(dm))} ${sizes[i]}`;
 }
 
-export function formatDate(dateString: string | Date): string {
-  const date = typeof dateString === 'string' ? new Date(dateString) : dateString;
-  return new Intl.DateTimeFormat('en-US', {
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  }).format(date);
+export function formatDate(dateString?: string | Date | null): string {
+  if (!dateString) return 'Recent';
+  try {
+    const date = typeof dateString === 'string' ? new Date(dateString) : dateString;
+    if (!date || isNaN(date.getTime())) return 'Recent';
+    return new Intl.DateTimeFormat('en-US', {
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    }).format(date);
+  } catch {
+    return 'Recent';
+  }
 }

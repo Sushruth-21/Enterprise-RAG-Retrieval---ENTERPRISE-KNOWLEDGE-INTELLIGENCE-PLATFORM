@@ -43,17 +43,41 @@ export const workspaceService = {
   // GET /api/documents
   async getDocuments(workspaceId?: string): Promise<DocumentItem[]> {
     try {
-      const res = await apiClient.get<DocumentItem[]>('/api/documents', {
+      const res = await apiClient.get<any>('/api/documents', {
         params: workspaceId ? { workspace_id: workspaceId, as_list: true } : { as_list: true },
         headers: { 'x-frontend': 'true' },
       });
-      if (Array.isArray(res.data)) {
-        return res.data;
-      }
-      if (res.data && Array.isArray((res.data as any).documents)) {
-        return (res.data as any).documents;
-      }
-      return [];
+      const rawList = Array.isArray(res.data) ? res.data : (res.data?.documents || []);
+      return rawList.map((d: any) => {
+        const id = d.id || d.document_id || '';
+        const name = d.name || d.document_name || 'Document';
+        const rawDate = d.uploadedAt || d.uploaded_at;
+        let validDate = new Date().toISOString();
+        if (rawDate) {
+          try {
+            const parsed = new Date(rawDate);
+            if (!isNaN(parsed.getTime())) {
+              validDate = parsed.toISOString();
+            }
+          } catch {}
+        }
+        const scope = d.accessScope || d.access_scope || 'public';
+        return {
+          id,
+          workspaceId: d.workspaceId || d.workspace_id || 'default',
+          name,
+          format: (d.format || d.doc_type || 'pdf').toLowerCase() as any,
+          sizeBytes: Number(d.sizeBytes || d.size_bytes || 0),
+          uploadedAt: validDate,
+          status: 'ready' as any,
+          pageCount: Number(d.pageCount || d.page_count || 1),
+          chunksCount: Number(d.chunksCount || d.chunkCount || d.section_count || 0),
+          summary: d.summary || d.description || '',
+          version: String(d.version || '1.0'),
+          accessScope: scope as any,
+          isEmployeeAccessible: d.isEmployeeAccessible ?? (scope === 'public'),
+        };
+      });
     } catch (err) {
       console.warn('Failed to fetch documents from backend:', err);
       return [];
@@ -82,7 +106,7 @@ export const workspaceService = {
     formData.append('access_scope', isEmployeeAccessible ? 'public' : 'confidential');
 
     try {
-      const res = await apiClient.post<DocumentItem>('/api/documents/upload', formData, {
+      const res = await apiClient.post<any>('/api/documents/upload', formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
         onUploadProgress: (progressEvent) => {
           if (progressEvent.total && onProgress) {
@@ -91,7 +115,24 @@ export const workspaceService = {
           }
         },
       });
-      return res.data;
+
+      const raw = res.data || {};
+      const uploadedDoc: DocumentItem = {
+        id: raw.id || raw.document_id || `doc_${Date.now()}`,
+        workspaceId: raw.workspaceId || raw.workspace_id || workspaceId || 'default',
+        name: raw.name || raw.document_name || safeName,
+        format: (raw.format || 'pdf').toLowerCase() as any,
+        sizeBytes: Number(raw.sizeBytes || file.size || 0),
+        uploadedAt: raw.uploadedAt || new Date().toISOString(),
+        status: 'ready',
+        pageCount: Number(raw.pageCount || 1),
+        chunksCount: Number(raw.chunkCount || raw.chunksCount || 0),
+        summary: raw.summary || raw.description || '',
+        version: String(raw.version || raw.version_id || '1.0'),
+        accessScope: isEmployeeAccessible ? 'public' : 'confidential',
+        isEmployeeAccessible: isEmployeeAccessible,
+      };
+      return uploadedDoc;
     } catch (err: any) {
       console.error('Document upload failed on backend:', err);
       const detail = err.response?.data?.detail || err.message || 'Document upload failed';
